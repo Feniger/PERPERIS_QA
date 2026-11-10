@@ -8,6 +8,7 @@ TMP = tempfile.TemporaryDirectory()
 os.environ['PERPERIS_QA_DB'] = str(Path(TMP.name)/'test.sqlite3')
 os.environ['PERPERIS_QA_PASSWORD'] = 'test-password-long-unique'
 os.environ['PERPERIS_QA_SECRET'] = 'test-secret-0123456789-0123456789-0123456789'
+os.environ['PERPERIS_QA_ENV'] = 'local'
 
 from fastapi.testclient import TestClient
 from app import APP
@@ -15,11 +16,12 @@ from app import APP
 class QATests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(APP)
+        cls.client_context = TestClient(APP)
+        cls.client = cls.client_context.__enter__()
 
     @classmethod
     def tearDownClass(cls):
-        cls.client.close()
+        cls.client_context.__exit__(None, None, None)
 
     def test_01_secure_default_and_login(self):
         self.assertEqual(self.client.get('/api/tickets').status_code,401)

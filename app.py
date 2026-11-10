@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -18,7 +18,28 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv('PERPERIS_QA_DB', str(ROOT / 'qa.sqlite3')))
 ADMIN_PASSWORD = os.getenv('PERPERIS_QA_PASSWORD', '')
 SECRET = os.getenv('PERPERIS_QA_SECRET', '')
-APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None)
+
+def check_runtime():
+    """The shared-password/SQLite prototype is only supported locally.
+
+    Cloud Run sets K_SERVICE. No configuration switch enables cloud mode until
+    persistent storage and verified user authentication have been implemented.
+    """
+    if 'K_SERVICE' in os.environ or os.getenv('PERPERIS_QA_ENV', 'local') != 'local':
+        raise RuntimeError(
+            'PERPERIS QA cloud startup is blocked: verified user authentication '
+            'and persistent cloud storage are not implemented. Run locally only.'
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    check_runtime()
+    initialize()
+    yield
+
+
+APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, lifespan=lifespan)
 VALID_STATUS = {'reported','triaged','in_progress','fixed','deployed','verified','closed','reopened'}
 VALID_SEVERITY = {'critical','high','medium','low'}
 VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','auth','deployment','other'}
@@ -64,14 +85,13 @@ def initialize():
             CREATE INDEX IF NOT EXISTS ix_tickets_round ON tickets(testing_round);
         ''')
 
-initialize()
-
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
 def check_setup():
+    check_runtime()
     if not ADMIN_PASSWORD or not SECRET or len(SECRET) < 32:
         raise HTTPException(503, 'Set PERPERIS_QA_PASSWORD and PERPERIS_QA_SECRET (32+ characters) before using this app')
 
