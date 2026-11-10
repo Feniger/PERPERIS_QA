@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const STATUSES = ['reported', 'triaged', 'in_progress', 'fixed', 'deployed', 'verified', 'closed', 'reopened'];
 const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',fixed:'Fixed',deployed:'Deployed',verified:'Verified',closed:'Closed',reopened:'Reopened',ui_ux:'UI / UX',coach_ai:'Coach / AI'};
 const COLORS = {found:'#d89864',fixed:'#527cb1',verified:'#57a77c'};
-let tickets = [], analytics = null, editing = null, lastFocus = null;
+let tickets = [], analytics = null, editing = null, lastFocus = null, session = {role:'Admin'};
 const label = value => LABELS[value] || String(value || '—').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const formatDate = value => value ? new Date(value).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
@@ -17,7 +17,7 @@ async function api(url,{method='GET',body}={}) {
 }
 function toggleSession(authed){$('workspace').classList.toggle('hidden',!authed);$('login').classList.toggle('hidden',authed);}
 async function initial(){
-  try {await api('/api/me');toggleSession(true);await refresh();}
+  try {qaIdentity.config=await api('/api/auth/config');const managed=qaIdentity.config.mode==='identity';$('email-label').classList.toggle('hidden',!managed);$('identity-actions').classList.toggle('hidden',!managed);$('email').required=managed;session=await api('/api/me');toggleSession(true);$('manage-members').classList.toggle('hidden',!managed||session.role!=='Admin');await refresh();}
   catch(e){toggleSession(false);if(e.status===503) $('login-error').textContent=e.message;}
 }
 async function refresh(){
@@ -90,9 +90,9 @@ function renderChart(){
 }
 function setTrend(title,desc){$('trend-title').textContent=title;$('trend-desc').textContent=desc;}
 function setModal(open){$('modal').classList.toggle('hidden',!open);document.body.style.overflow=open?'hidden':'';if(open){lastFocus=document.activeElement;setTimeout(()=>document.querySelector('#ticket-form input:not([type=hidden]), #ticket-form select')?.focus(),20);}else{editing=null;lastFocus?.focus?.();}}
-function newTicket(){editing=null;$('ticket-form').reset();$('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('modal-eyebrow').textContent='ISSUE INTAKE';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';$('ticket-form').elements.reporter.value='Product Owner';$('ticket-form').elements.testing_round.value=analytics.rounds.at(-1)?.round || 'R01';setModal(true);}
-function openEdit(id){const ticket=tickets.find(t=>t.id===id);if(!ticket)return;editing=ticket;$('ticket-form').reset();$('create-fields').classList.add('hidden');$('update-fields').classList.remove('hidden');$('modal-eyebrow').textContent=`QA-${String(id).padStart(3,'0')} / TICKET DETAIL`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save ticket';$('form-error').textContent='';$('ticket-detail').innerHTML=`<strong>${esc(ticket.title)}</strong><p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;
-  $('edit-status').innerHTML=STATUSES.map(s=>`<option value="${s}">${label(s)}</option>`).join('');$('edit-status').value=ticket.status;$('ticket-form').elements.assigned_to.value=ticket.assigned_to||'';$('ticket-form').elements.resolution_notes.value=ticket.resolution_notes||'';$('ticket-form').elements.resolution_round.value=ticket.fixed_round||ticket.verified_round||'';setModal(true);}
+function newTicket(){editing=null;$('ticket-form').reset();$('create-fields').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=false);$('update-fields').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=true);$('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('modal-eyebrow').textContent='ISSUE INTAKE';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';$('ticket-form').elements.reporter.value='Product Owner';$('ticket-form').elements.testing_round.value=analytics.rounds.at(-1)?.round || 'R01';setModal(true);}
+function openEdit(id){const ticket=tickets.find(t=>t.id===id);if(!ticket)return;editing=ticket;$('ticket-form').reset();$('create-fields').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=true);$('update-fields').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=false);$('create-fields').classList.add('hidden');$('update-fields').classList.remove('hidden');$('modal-eyebrow').textContent=`QA-${String(id).padStart(3,'0')} / TICKET DETAIL`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save ticket';$('form-error').textContent='';$('ticket-detail').innerHTML=`<strong>${esc(ticket.title)}</strong><p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;
+  $('edit-status').innerHTML=STATUSES.filter(s=>session.role==='Admin'||(session.role==='Developer'?['triaged','in_progress','fixed','deployed'].includes(s):['verified','closed','reopened'].includes(s))).map(s=>`<option value="${s}">${label(s)}</option>`).join('');if([...$('edit-status').options].some(o=>o.value===ticket.status))$('edit-status').value=ticket.status;$('ticket-form').elements.assigned_to.value=ticket.assigned_to||'';$('ticket-form').elements.assigned_to.readOnly=session.role==='Tester';$('ticket-form').elements.resolution_notes.value=ticket.resolution_notes||'';$('ticket-form').elements.resolution_round.value=ticket.fixed_round||ticket.verified_round||'';setModal(true);}
 function safeUrl(url){try {const u=new URL(url);return u.protocol==='https:'?u.href:'#';}catch{return '#';}}
 $('ticket-form').addEventListener('submit',async e=>{
   e.preventDefault();const form=e.currentTarget,btn=$('form-submit');btn.disabled=true;$('form-error').textContent='';
@@ -104,6 +104,35 @@ $('modal-close').addEventListener('click',()=>setModal(false));$('modal-cancel')
 $('modal').addEventListener('click',e=>{if(e.target===$('modal'))setModal(false)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('modal').classList.contains('hidden'))setModal(false);});
 ['search','status-filter','severity-filter','round-filter'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',renderTable));
-$('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:{password:$('password').value}});$('password').value='';toggleSession(true);await refresh();}catch(err){$('login-error').textContent=err.message;}});
+$('login-form').addEventListener('submit',async e=>{
+  e.preventDefault();$('login-error').textContent='';
+  const password=$('password').value;$('password').value='';
+  try{if(qaIdentity.config?.mode==='identity')await qaIdentity.signIn($('email').value,password);else await api('/api/login',{method:'POST',body:{password}});await initial();}
+  catch(err){$('login-error').textContent=err.message;}
+});
+for(const [id,action] of [['register','register'],['reset-password','reset']]){
+  $(id).addEventListener('click',async()=>{
+    $('login-error').textContent='';const password=$('password').value;$('password').value='';
+    if(!$('email').value){$('login-error').textContent='Enter your email first.';return;}
+    try{$('login-error').textContent=await qaIdentity[action]($('email').value,password);}catch(err){$('login-error').textContent=err.message;}
+  });
+}
+$('manage-members').addEventListener('click',async()=>{
+  $('members-panel').classList.remove('hidden');$('members-error').textContent='';
+  try{const data=await api('/api/members');$('members-list').replaceChildren();
+    for(const member of data.members){
+      const row=document.createElement('div');row.className='member-row';
+      const name=document.createElement('p');name.textContent=member.display_name+' · '+member.email;row.append(name);
+      const role=document.createElement('select');role.setAttribute('aria-label','Role for '+member.display_name);
+      for(const value of ['Admin','Developer','Tester'])role.add(new Option(value,value));role.value=member.role;row.append(role);
+      const state=document.createElement('select');state.setAttribute('aria-label','State for '+member.display_name);
+      for(const value of ['pending','active','disabled'])state.add(new Option(value,value));state.value=member.state;row.append(state);
+      const save=document.createElement('button');save.className='primary';save.textContent='Save membership';
+      save.addEventListener('click',async()=>{save.disabled=true;try{await api('/api/members/'+encodeURIComponent(member.subject),{method:'PATCH',body:{role:role.value,state:state.value}});$('members-error').textContent='Membership saved. The member must sign in again.';}catch(err){$('members-error').textContent=err.message;}finally{save.disabled=false;}});
+      row.append(save);$('members-list').append(row);
+    }
+  }catch(err){$('members-error').textContent=err.message;}
+});
+$('members-close').addEventListener('click',()=>$('members-panel').classList.add('hidden'));
 $('logout').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST'})}finally{toggleSession(false);}});
 initial();

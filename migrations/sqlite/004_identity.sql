@@ -1,0 +1,41 @@
+CREATE TABLE qa_members(
+    subject TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'Tester' CHECK(role IN ('Admin','Developer','Tester')),
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','active','disabled')),
+    created_at BIGINT NOT NULL
+);
+CREATE TABLE qa_sessions(
+    token_hash TEXT PRIMARY KEY,
+    subject TEXT NOT NULL REFERENCES qa_members(subject),
+    created_at BIGINT NOT NULL,
+    authenticated_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    revoked_at BIGINT
+);
+CREATE INDEX ix_qa_sessions_subject ON qa_sessions(subject);
+CREATE INDEX ix_qa_sessions_expiry ON qa_sessions(expires_at);
+CREATE TABLE qa_security_events(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_subject TEXT,
+    target_subject TEXT NOT NULL,
+    action TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE TABLE qa_auth_throttle(
+    bucket TEXT PRIMARY KEY,
+    window_start BIGINT NOT NULL,
+    attempts INTEGER NOT NULL
+);
+ALTER TABLE ticket_events ADD COLUMN actor_subject TEXT;
+ALTER TABLE tickets ADD COLUMN reporter_subject TEXT;
+CREATE TABLE ticket_changes(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+    actor TEXT NOT NULL,
+    actor_subject TEXT,
+    changes_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX ix_ticket_changes_ticket ON ticket_changes(ticket_id,id);

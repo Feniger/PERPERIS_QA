@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, Depends
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from database import Database
+import identity
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv('PERPERIS_QA_DB', str(ROOT / 'qa.sqlite3')))
@@ -37,6 +39,7 @@ def check_runtime():
 async def lifespan(app: FastAPI):
     check_runtime()
     try:
+        identity.check_configuration()
         initialize()
         yield
     finally:
@@ -66,6 +69,9 @@ def now():
 
 def check_setup():
     check_runtime()
+    identity.check_configuration()
+    if identity.mode() == 'identity':
+        return
     if not ADMIN_PASSWORD or not SECRET or len(SECRET) < 32:
         raise HTTPException(503, 'Set PERPERIS_QA_PASSWORD and PERPERIS_QA_SECRET (32+ characters) before using this app')
 
@@ -76,20 +82,18 @@ def session_sig(value: str):
 
 def current_user(request: Request):
     check_setup()
+    if identity.mode() == 'identity':
+        return identity.current(DATABASE, request.cookies.get('qa_session', ''))
     value = request.cookies.get('qa_session','')
     if not value.startswith('admin.') or not hmac.compare_digest(value.split('.',1)[1], session_sig('admin')):
         raise HTTPException(401,'Sign in required')
-    return 'Admin'
+    return identity.Principal('Admin')
 
 
 def guard_mutation(request: Request, user: str = Depends(current_user)):
-    # Local-first prototype: same-origin JSON requests must provide this header.
-    if request.headers.get('x-qa-request') != '1':
-        raise HTTPException(403, 'Missing request header')
-    origin = request.headers.get('origin')
-    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
-        raise HTTPException(403, 'Cross-origin request blocked')
+    identity.require_origin(request)
     return user
+
 
 class SignIn(BaseModel):
     password: str
@@ -120,13 +124,15 @@ def index():
 
 @APP.get('/static/{filename}')
 def asset(filename: str):
-    if filename not in ('app.js','styles.css'):
+    if filename not in ('app.js','styles.css','auth.js'):
         raise HTTPException(404)
     return FileResponse(ROOT/'static'/filename)
 
 @APP.post('/api/login')
 def login(payload: SignIn,response:Response):
     check_setup()
+    if identity.mode() != 'local_shared':
+        raise HTTPException(404, 'Use verified identity sign-in')
     if not hmac.compare_digest(payload.password,ADMIN_PASSWORD):
         raise HTTPException(401,'Incorrect password')
     response.set_cookie('qa_session','admin.'+session_sig('admin'),httponly=True,samesite='strict',secure=os.getenv('PERPERIS_QA_HTTPS')=='1',max_age=86400)
@@ -134,12 +140,16 @@ def login(payload: SignIn,response:Response):
 
 @APP.post('/api/logout')
 def logout(response:Response, user:str=Depends(guard_mutation)):
+    if user.session_hash:
+        with connection(write=True) as db:
+            db.execute('UPDATE qa_sessions SET revoked_at=? WHERE token_hash=?', (int(time.time()), user.session_hash))
+            identity.security_event(db, user.subject, user.subject, 'session_revoked')
     response.delete_cookie('qa_session')
     return {'ok':True}
 
 @APP.get('/api/me')
 def me(user:str=Depends(current_user)):
-    return {'name':user}
+    return {'name':user.name, 'role': user.role}
 
 
 def validate_enum(value, choices, field):
@@ -157,21 +167,30 @@ def create_ticket(payload:TicketCreate,user:str=Depends(guard_mutation)):
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
     dt=now()
     with connection(write=True) as db:
-        c=db.execute('''INSERT INTO tickets(title,description,reporter,category,severity,status,testing_round,area,environment,deploy_version,assigned_to,issue_url,created_at,updated_at)
-         VALUES(?,?,?,?,?,'reported',?,?,?,?,?,?,?,?) RETURNING id''',
-         (payload.title.strip(),payload.description,payload.reporter.strip(),payload.category,payload.severity,payload.testing_round.strip(),payload.area,payload.environment,payload.deploy_version,payload.assigned_to,payload.issue_url,dt,dt))
+        identity.authorize_member(db, user)
+        if user.role == 'Tester' and payload.assigned_to:
+            raise HTTPException(403, 'Tester cannot assign tickets')
+        c=db.execute('''INSERT INTO tickets(title,description,reporter,category,severity,status,testing_round,area,environment,deploy_version,assigned_to,issue_url,created_at,updated_at,reporter_subject)
+         VALUES(?,?,?,?,?,'reported',?,?,?,?,?,?,?,?,?) RETURNING id''',
+         (payload.title.strip(),payload.description,(user.name if user.subject else payload.reporter.strip()),payload.category,payload.severity,payload.testing_round.strip(),payload.area,payload.environment,payload.deploy_version,payload.assigned_to,payload.issue_url,dt,dt,user.subject))
         ticket_id=c.fetchone()['id']
-        db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,NULL,?,?,?)',(ticket_id,'reported',user,dt))
+        db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at,actor_subject) VALUES(?,NULL,?,?,?,?)',(ticket_id,'reported',user.name,dt,user.subject))
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
 
 @APP.patch('/api/tickets/{ticket_id}')
 def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_mutation)):
     validate_enum(payload.status,VALID_STATUS,'status')
     with connection(write=True) as db:
+        identity.authorize_member(db, user)
         old=db.execute('SELECT * FROM tickets WHERE id=?' + db.lock_clause,(ticket_id,)).fetchone()
         if old is None: raise HTTPException(404,'Ticket not found')
         if payload.expected_version is not None and payload.expected_version != old['version']:
             raise HTTPException(409, 'Ticket changed; refresh before saving')
+        if user.role == 'Developer' and payload.status not in {'triaged','in_progress','fixed','deployed'}:
+            raise HTTPException(403, 'Developer cannot verify, close or reopen tickets')
+        if user.role == 'Tester':
+            if payload.status not in {'verified','closed','reopened'} or old['assigned_to'] != payload.assigned_to:
+                raise HTTPException(403, 'Tester may verify, close or reopen without changing assignment')
         dt=now()
         fixed_at=old['fixed_at'] or (dt if payload.status in ('fixed','deployed','verified','closed') else None)
         deployed_at=old['deployed_at'] or (dt if payload.status in ('deployed','verified','closed') else None)
@@ -182,7 +201,10 @@ def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_muta
         db.execute('''UPDATE tickets SET status=?,assigned_to=?,resolution_notes=?,updated_at=?,fixed_at=?,deployed_at=?,verified_at=?,closed_at=?,fixed_round=?,verified_round=?,version=version+1 WHERE id=?''',
                    (payload.status,payload.assigned_to,payload.resolution_notes,dt,fixed_at,deployed_at,verified_at,closed_at,fixed_round,verified_round,ticket_id))
         if old['status']!=payload.status:
-            db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,?,?,?,?)',(ticket_id,old['status'],payload.status,user,dt))
+            db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at,actor_subject) VALUES(?,?,?,?,?,?)',(ticket_id,old['status'],payload.status,user.name,dt,user.subject))
+        changes = {key: {'old': old[key], 'new': value} for key, value in {'status': payload.status, 'assigned_to': payload.assigned_to, 'resolution_notes': payload.resolution_notes}.items() if old[key] != value}
+        if changes:
+            db.execute('INSERT INTO ticket_changes(ticket_id,actor,actor_subject,changes_json,created_at) VALUES(?,?,?,?,?)', (ticket_id, user.name, user.subject, json.dumps(changes), dt))
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
 
 @APP.get('/api/analytics')
@@ -212,3 +234,70 @@ def analytics(user:str=Depends(current_user)):
             'critical':severity.get('critical',0),'severity':severity,'categories':categories,'reporters':reporters,
             'rounds':round_data,'crossover':cross,'backlog':found-verified,
             'analytics_note':'Found is counted in its discovery round; fixed/verified in the round the status was first recorded. Backlog uses found minus verified.'}
+
+
+class SessionExchange(BaseModel):
+    id_token: str = Field(min_length=1, max_length=16000)
+
+
+class MemberUpdate(BaseModel):
+    role: Literal['Admin', 'Developer', 'Tester']
+    state: Literal['pending', 'active', 'disabled']
+
+
+@APP.get('/api/auth/config')
+def auth_config():
+    check_runtime()
+    identity.check_configuration()
+    result = {'mode': identity.mode()}
+    if identity.mode() == 'identity':
+        # Browser API key is public project configuration, never an Admin SDK key.
+        result['web_api_key'] = os.getenv('PERPERIS_QA_IDENTITY_WEB_API_KEY', '')
+    return result
+
+
+@APP.post('/api/session')
+def exchange_session(payload: SessionExchange, request: Request, response: Response):
+    check_setup()
+    if identity.mode() != 'identity':
+        raise HTTPException(404, 'Identity sign-in is not enabled')
+    identity.require_origin(request)
+    identity.throttle(DATABASE, request)
+    token = identity.exchange(DATABASE, payload.id_token)
+    response.set_cookie('qa_session', token, httponly=True, secure=True, samesite='strict', max_age=3600)
+    return {'ok': True}
+
+
+@APP.get('/api/members')
+def members(user=Depends(current_user)):
+    identity.require_role(user, {'Admin'})
+    if not user.subject:
+        raise HTTPException(403, 'Verified Admin membership required')
+    with connection() as db:
+        return {'members': [dict(r) for r in db.execute('SELECT subject,email,display_name,role,state FROM qa_members ORDER BY created_at,subject').fetchall()]}
+
+
+@APP.patch('/api/members/{subject}')
+def update_member(subject: str, payload: MemberUpdate, user=Depends(guard_mutation)):
+    identity.change_member(DATABASE, user, subject, payload.role, payload.state)
+    return {'ok': True}
+
+
+@APP.get('/api/tickets/{ticket_id}/history')
+def ticket_history(ticket_id: int, user=Depends(current_user)):
+    with connection() as db:
+        if db.execute('SELECT id FROM tickets WHERE id=?', (ticket_id,)).fetchone() is None:
+            raise HTTPException(404, 'Ticket not found')
+        return {'events': [dict(r) for r in db.execute('SELECT * FROM ticket_events WHERE ticket_id=? ORDER BY id', (ticket_id,)).fetchall()],
+                'changes': [dict(r) for r in db.execute('SELECT * FROM ticket_changes WHERE ticket_id=? ORDER BY id', (ticket_id,)).fetchall()]}
+
+
+@APP.middleware('http')
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['X-Frame-Options'] = 'DENY'
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response

@@ -42,17 +42,20 @@ def snapshot(source):
             if snap.execute('PRAGMA foreign_key_check').fetchall():
                 raise ImportRejected('Source foreign key check failed')
             result = {}
+            if snap.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='qa_members'").fetchone() and snap.execute('SELECT COUNT(*) FROM qa_members').fetchone()[0]:
+                raise ImportRejected('Identity-bearing SQLite databases require a separate reviewed migration')
             sequences = dict(snap.execute('SELECT name,seq FROM sqlite_sequence').fetchall())
             for table, required in (('tickets', TICKET_COLUMNS), ('ticket_events', EVENT_COLUMNS)):
                 columns = {row['name'] for row in snap.execute(f'PRAGMA table_info({table})')}
-                allowed = set(required) | ({'version'} if table == 'tickets' else set())
+                additive = ('version', 'reporter_subject') if table == 'tickets' else ('actor_subject',)
+                allowed = set(required) | set(additive)
                 if not set(required) <= columns or columns - allowed:
                     raise ImportRejected('Unsupported source columns; review mapping before import')
                 rows = [dict(row) for row in snap.execute(f'SELECT * FROM {table} ORDER BY id')]
                 high_water = max([0, sequences.get(table, 0)] + [r['id'] for r in rows])
                 if high_water >= 9223372036854775807:
                     raise ImportRejected('Source sequence is exhausted')
-                result[table] = {'rows': rows, 'columns': tuple(required) + (('version',) if 'version' in columns else ()),
+                result[table] = {'rows': rows, 'columns': tuple(required) + tuple(c for c in additive if c in columns),
                                  'next_id': high_water + 1}
             validate(result)
             return result
@@ -63,6 +66,8 @@ def validate(data):
         for row in info['rows']:
             if not isinstance(row['id'], int) or row['id'] <= 0:
                 raise ImportRejected('Source requires positive integer identifiers')
+            if row.get('actor_subject') or row.get('reporter_subject'):
+                raise ImportRejected('Verified subjects require an identity-aware migration')
             if table == 'tickets':
                 if row['status'] not in STATUSES or row['severity'] not in {'critical', 'high', 'medium', 'low'}:
                     raise ImportRejected('Source enum values require review')

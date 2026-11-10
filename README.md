@@ -73,3 +73,10 @@ container build contexts.
 migrations, the opt-in PostgreSQL backend, dry-run import and rollback tests.
 SQLite remains the local default. Setting `PERPERIS_QA_DATABASE_URL` selects
 PostgreSQL but does **not** permit cloud startup or make shared-password auth safe.
+
+### Verified identity (QA-CLOUD-03)
+
+[Identity and role runbook](docs/QA-CLOUD-03.md) covers opt-in managed registration,
+verified email, pending membership, Admin/Developer/Tester permissions, revocable
+sessions and explicit private Admin bootstrap. It requires a separately configured
+QA identity project; no live provider or public deployment is enabled by this code.
