@@ -32,19 +32,37 @@ Open http://127.0.0.1:8787 . The SQLite database file is created in `qa.sqlite3`
 
 **This is a tested prototype, not a production-hardened public multi-user system.** Do not deploy it to `qa.perperis.app` as-is. Before internet access, implement real user accounts and RBAC, persistent session rotation/expiry, complete audit actor attribution, login rate limiting, secure HTTPS cookie deployment, backup/restore, and monitored upgrades. The current authentication is a shared admin password; the free-text reporter field is not a verified user identity. Keep the app on localhost or behind an authenticated private network for initial testing.
 
-The URL `qa.perperis.app` is proposed, **not configured**. No repository has been created automatically.
+The URL `qa.perperis.app` is proposed, **not configured**. Source lives in the standalone `Feniger/PERPERIS_QA` repository.
 
 Testing-round labels should follow `R01`, `R02`, etc. A report counts as **found** in its discovery round; the first fixed/verified transition counts in its specified resolution round (if blank, the discovery round). Later reopens do not erase the original first-fix milestone, and this prototype does not yet support multiple fix cycles per issue. Hence the trend plots **first fixes/verification milestones**, not all transitions. The chart marks the first round containing at least one discovered bug where fixes >= discoveries; its marker is descriptive rather than predictive.
 
 ## Run tests
 
 ```bash
+pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
+
+## Cloud foundation (QA-CLOUD-01)
+
+See [the implementation assessment and proposed architecture](docs/QA-CLOUD-01.md)
+for security risks, verified registration and roles, private screenshot planning,
+architecture approvals, and migration/rollback strategy.
+
+This prototype deliberately **refuses startup on Cloud Run** (`K_SERVICE` present)
+or when `PERPERIS_QA_ENV` is anything other than `local` (the default). There is no
+cloud override. Keep binding to `127.0.0.1`; the guard is not network isolation.
+No cloud resources or deployment pipeline are created by this Story.
+
+Database initialization now happens during ASGI lifespan, after the runtime check,
+not on Python import. ASGI runners must keep lifespan enabled; TestClient users
+must use a context manager. Existing SQLite schema and ticket semantics remain
+unchanged. Do not put databases, backups, screenshots, keys or secrets in Git or
+container build contexts.
 
 ## Next milestones
 
 1. Proper multi-user auth, roles, ticket comments and attachment storage; migrate session and audit to verified identities.
-2. Real deployment pipeline to a *new* GitHub repository and a private hosting environment; only then configure DNS for `qa.perperis.app`.
+2. Approved deployment pipeline from this QA repository to a dedicated QA Google Cloud project; private staging first, then separately approved production and DNS.
 3. Import PERPERIS feedback rounds with duplicate review and preserve original GitHub issue/PR references; no invented statuses.
 4. GitHub synchronization as a controlled integration, with ownership rules for when status is driven by code vs human verification.

@@ -188,3 +188,12 @@ __pycache__/
 *.sqlite3
 .DS_Store
 uploads/
+attachments/
+backups/
+*.db-*
+*.sqlite-*
+*.sqlite3-*
+*.dump
+*.pem
+*.key
+*-credentials.json
