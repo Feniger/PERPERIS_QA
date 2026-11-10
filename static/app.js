@@ -96,7 +96,7 @@ function openEdit(id){const ticket=tickets.find(t=>t.id===id);if(!ticket)return;
 function safeUrl(url){try {const u=new URL(url);return u.protocol==='https:'?u.href:'#';}catch{return '#';}}
 $('ticket-form').addEventListener('submit',async e=>{
   e.preventDefault();const form=e.currentTarget,btn=$('form-submit');btn.disabled=true;$('form-error').textContent='';
-  try{let res;if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{status:form.elements.status.value,assigned_to:form.elements.assigned_to.value,resolution_notes:form.elements.resolution_notes.value,resolution_round:form.elements.resolution_round.value}});}else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version','issue_url'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}setModal(false);await refresh();}
+  try{let res;if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_version:editing.version,status:form.elements.status.value,assigned_to:form.elements.assigned_to.value,resolution_notes:form.elements.resolution_notes.value,resolution_round:form.elements.resolution_round.value}});}else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version','issue_url'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}setModal(false);await refresh();}
   catch(err){$('form-error').textContent=err.message;}finally{btn.disabled=false;}
 });
 $('new-ticket').addEventListener('click',newTicket);

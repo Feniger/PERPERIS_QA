@@ -13,7 +13,7 @@ class FoundationTests(unittest.TestCase):
     def run_isolated(self, code, **overrides):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / 'nested' / 'qa.sqlite3'
-            env = {k: v for k, v in os.environ.items() if k != 'K_SERVICE'}
+            env = {k: v for k, v in os.environ.items() if k not in {'K_SERVICE', 'PERPERIS_QA_DATABASE_URL'}}
             env.update(PERPERIS_QA_DB=str(db_path), PERPERIS_QA_ENV='local',
                        PERPERIS_QA_PASSWORD='synthetic-test-password',
                        PERPERIS_QA_SECRET='synthetic-test-secret-' * 3)
