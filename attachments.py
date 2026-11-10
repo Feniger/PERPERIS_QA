@@ -29,14 +29,14 @@ def normalize_image(content):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', Image.DecompressionBombWarning)
-            with Image.open(BytesIO(content)) as original:
+            with Image.open(BytesIO(content), formats=('PNG','JPEG','WEBP')) as original:
                 if original.format not in {'PNG','JPEG','WEBP'} or getattr(original, 'n_frames', 1) != 1:
                     raise ValueError('Unsupported image')
                 width, height = original.size
                 if width > 8192 or height > 8192 or width * height > MAX_PIXELS:
                     raise ValueError('Image dimensions too large')
                 original.verify()
-            with Image.open(BytesIO(content)) as original:
+            with Image.open(BytesIO(content), formats=('PNG','JPEG','WEBP')) as original:
                 # Copy decoded pixels into a fresh image to strip EXIF, comments,
                 # profile, filenames, text chunks and other embedded metadata.
                 converted = original.convert('RGBA' if 'A' in original.getbands() or 'transparency' in original.info else 'RGB')
@@ -91,6 +91,8 @@ class LocalStore:
 
 class CloudStore:
     def __init__(self, bucket_name):
+        if 'STORAGE_EMULATOR_HOST' in os.environ:
+            raise ValueError('Emulator storage is not permitted for private cloud screenshots')
         from google.cloud import storage
         from google.api_core.retry import Retry
         self.retry = Retry(deadline=45)
