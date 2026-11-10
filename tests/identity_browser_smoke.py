@@ -86,7 +86,7 @@ def main():
                             context=browser.new_context(ignore_https_errors=True);contexts.append(context)
                             page=context.new_page()
                             page.route('https://identitytoolkit.googleapis.com/**',lambda route:route.fulfill(json={'idToken':name}))
-                            page.goto(origin)
+                            page.goto(origin+'#tickets')  # the redesign puts the ticket rows on the Tickets view
                             page.locator('#email').fill(name+'@example.test')
                             page.locator('#password').fill('synthetic-password')
                             page.locator('#login-form button.primary').click()
