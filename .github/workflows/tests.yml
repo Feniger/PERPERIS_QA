@@ -1,0 +1,79 @@
+# PERPERIS QA — automatic checks on every pull request and every change to main.
+# Runs the existing suites only; no cloud access, secrets or deployment.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit and PostgreSQL tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qa_test
+          POSTGRES_PASSWORD: qa_test_only
+          POSTGRES_DB: qa_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U qa_test" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked runtime and test tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.lock
+          pip install 'httpx>=0.27,<1'
+          pip check
+      - name: Run tests (SQLite and disposable PostgreSQL 16)
+        env:
+          PERPERIS_QA_TEST_POSTGRES_URL: postgresql://qa_test:qa_test_only@localhost:5432/qa_test
+        run: python -m unittest discover -s tests -v
+
+  browser:
+    name: Browser smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked runtime, test tools and Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.lock
+          pip install 'httpx>=0.27,<1' 'playwright>=1.50,<2'
+          python -m playwright install --with-deps chromium
+      - name: Shared-password workflow, screenshots and upload retry
+        run: python tests/browser_smoke.py
+      - name: Managed sign-in, roles and membership (synthetic HTTPS)
+        run: python tests/identity_browser_smoke.py
+
+  container:
+    name: Container image checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build --pull -t perperis-qa:qa-cloud-05 .
+      - name: Non-root, image contents, blocked cloud start, local HTTP
+        run: python3 tests/container_smoke.py
