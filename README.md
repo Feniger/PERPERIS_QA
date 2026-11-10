@@ -66,3 +66,10 @@ container build contexts.
 2. Approved deployment pipeline from this QA repository to a dedicated QA Google Cloud project; private staging first, then separately approved production and DNS.
 3. Import PERPERIS feedback rounds with duplicate review and preserve original GitHub issue/PR references; no invented statuses.
 4. GitHub synchronization as a controlled integration, with ownership rules for when status is driven by code vs human verification.
+
+### PostgreSQL rehearsal (QA-CLOUD-02)
+
+[Persistence and importer runbook](docs/QA-CLOUD-02.md) describes versioned
+migrations, the opt-in PostgreSQL backend, dry-run import and rollback tests.
+SQLite remains the local default. Setting `PERPERIS_QA_DATABASE_URL` selects
+PostgreSQL but does **not** permit cloud startup or make shared-password auth safe.

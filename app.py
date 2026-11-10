@@ -5,19 +5,20 @@ import hmac
 import json
 import os
 import secrets
-import sqlite3
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, HTTPException, Request, Response, Depends
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from database import Database
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv('PERPERIS_QA_DB', str(ROOT / 'qa.sqlite3')))
 ADMIN_PASSWORD = os.getenv('PERPERIS_QA_PASSWORD', '')
 SECRET = os.getenv('PERPERIS_QA_SECRET', '')
+DATABASE = Database(os.getenv('PERPERIS_QA_DATABASE_URL', ''), sqlite_path=DB_PATH)
 
 def check_runtime():
     """The shared-password/SQLite prototype is only supported locally.
@@ -35,8 +36,11 @@ def check_runtime():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     check_runtime()
-    initialize()
-    yield
+    try:
+        initialize()
+        yield
+    finally:
+        DATABASE.close()
 
 
 APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -44,46 +48,16 @@ VALID_STATUS = {'reported','triaged','in_progress','fixed','deployed','verified'
 VALID_SEVERITY = {'critical','high','medium','low'}
 VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','auth','deployment','other'}
 
-@contextmanager
-def connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    con.execute('PRAGMA foreign_keys=ON')
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
+def connection(*, write=False):
+    return DATABASE.connection(write=write)
 
 
 def initialize():
-    with connection() as db:
-        db.executescript('''
-            CREATE TABLE IF NOT EXISTS tickets(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-                reporter TEXT NOT NULL, category TEXT NOT NULL,
-                severity TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reported',
-                testing_round TEXT NOT NULL, area TEXT NOT NULL DEFAULT '',
-                environment TEXT NOT NULL DEFAULT 'production',
-                deploy_version TEXT NOT NULL DEFAULT '', assigned_to TEXT NOT NULL DEFAULT '',
-                issue_url TEXT NOT NULL DEFAULT '', resolution_notes TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                fixed_at TEXT, deployed_at TEXT, verified_at TEXT, closed_at TEXT, fixed_round TEXT, verified_round TEXT
-            );
-            CREATE TABLE IF NOT EXISTS ticket_events(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticket_id INTEGER NOT NULL REFERENCES tickets(id),
-                old_status TEXT, new_status TEXT NOT NULL,
-                actor TEXT NOT NULL, created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS ix_tickets_status ON tickets(status);
-            CREATE INDEX IF NOT EXISTS ix_tickets_round ON tickets(testing_round);
-        ''')
+    DATABASE.start()
+    if DATABASE.backend == 'sqlite':
+        DATABASE.migrate()
+    else:
+        DATABASE.check_schema()
 
 
 def now():
@@ -135,6 +109,7 @@ class TicketCreate(BaseModel):
 
 class TicketUpdate(BaseModel):
     status: str
+    expected_version: int | None = Field(default=None, ge=1)
     assigned_to: str = Field(default='',max_length=100)
     resolution_notes: str = Field(default='',max_length=10000)
     resolution_round: str = Field(default='',max_length=48)
@@ -181,28 +156,30 @@ def create_ticket(payload:TicketCreate,user:str=Depends(guard_mutation)):
     validate_enum(payload.category,VALID_CATEGORY,'category')
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
     dt=now()
-    with connection() as db:
+    with connection(write=True) as db:
         c=db.execute('''INSERT INTO tickets(title,description,reporter,category,severity,status,testing_round,area,environment,deploy_version,assigned_to,issue_url,created_at,updated_at)
-         VALUES(?,?,?,?,?,'reported',?,?,?,?,?,?,?,?)''',
+         VALUES(?,?,?,?,?,'reported',?,?,?,?,?,?,?,?) RETURNING id''',
          (payload.title.strip(),payload.description,payload.reporter.strip(),payload.category,payload.severity,payload.testing_round.strip(),payload.area,payload.environment,payload.deploy_version,payload.assigned_to,payload.issue_url,dt,dt))
-        ticket_id=c.lastrowid
+        ticket_id=c.fetchone()['id']
         db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,NULL,?,?,?)',(ticket_id,'reported',user,dt))
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
 
 @APP.patch('/api/tickets/{ticket_id}')
 def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_mutation)):
     validate_enum(payload.status,VALID_STATUS,'status')
-    dt=now()
-    with connection() as db:
-        old=db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone()
+    with connection(write=True) as db:
+        old=db.execute('SELECT * FROM tickets WHERE id=?' + db.lock_clause,(ticket_id,)).fetchone()
         if old is None: raise HTTPException(404,'Ticket not found')
+        if payload.expected_version is not None and payload.expected_version != old['version']:
+            raise HTTPException(409, 'Ticket changed; refresh before saving')
+        dt=now()
         fixed_at=old['fixed_at'] or (dt if payload.status in ('fixed','deployed','verified','closed') else None)
         deployed_at=old['deployed_at'] or (dt if payload.status in ('deployed','verified','closed') else None)
         verified_at=old['verified_at'] or (dt if payload.status in ('verified','closed') else None)
         closed_at=old['closed_at'] or (dt if payload.status == 'closed' else None)
         fixed_round=old['fixed_round'] or (payload.resolution_round.strip() or old['testing_round'] if fixed_at and not old['fixed_at'] else None)
         verified_round=old['verified_round'] or (payload.resolution_round.strip() or old['testing_round'] if verified_at and not old['verified_at'] else None)
-        db.execute('''UPDATE tickets SET status=?,assigned_to=?,resolution_notes=?,updated_at=?,fixed_at=?,deployed_at=?,verified_at=?,closed_at=?,fixed_round=?,verified_round=? WHERE id=?''',
+        db.execute('''UPDATE tickets SET status=?,assigned_to=?,resolution_notes=?,updated_at=?,fixed_at=?,deployed_at=?,verified_at=?,closed_at=?,fixed_round=?,verified_round=?,version=version+1 WHERE id=?''',
                    (payload.status,payload.assigned_to,payload.resolution_notes,dt,fixed_at,deployed_at,verified_at,closed_at,fixed_round,verified_round,ticket_id))
         if old['status']!=payload.status:
             db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,?,?,?,?)',(ticket_id,old['status'],payload.status,user,dt))
