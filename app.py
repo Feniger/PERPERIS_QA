@@ -1,0 +1,217 @@
+"""PERPERIS QA standalone local-first prototype. Not production hardened."""
+from __future__ import annotations
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Literal
+from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = Path(os.getenv('PERPERIS_QA_DB', str(ROOT / 'qa.sqlite3')))
+ADMIN_PASSWORD = os.getenv('PERPERIS_QA_PASSWORD', '')
+SECRET = os.getenv('PERPERIS_QA_SECRET', '')
+APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None)
+VALID_STATUS = {'reported','triaged','in_progress','fixed','deployed','verified','closed','reopened'}
+VALID_SEVERITY = {'critical','high','medium','low'}
+VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','auth','deployment','other'}
+
+@contextmanager
+def connection():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute('PRAGMA foreign_keys=ON')
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def initialize():
+    with connection() as db:
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS tickets(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                reporter TEXT NOT NULL, category TEXT NOT NULL,
+                severity TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reported',
+                testing_round TEXT NOT NULL, area TEXT NOT NULL DEFAULT '',
+                environment TEXT NOT NULL DEFAULT 'production',
+                deploy_version TEXT NOT NULL DEFAULT '', assigned_to TEXT NOT NULL DEFAULT '',
+                issue_url TEXT NOT NULL DEFAULT '', resolution_notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                fixed_at TEXT, deployed_at TEXT, verified_at TEXT, closed_at TEXT, fixed_round TEXT, verified_round TEXT
+            );
+            CREATE TABLE IF NOT EXISTS ticket_events(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+                old_status TEXT, new_status TEXT NOT NULL,
+                actor TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_tickets_status ON tickets(status);
+            CREATE INDEX IF NOT EXISTS ix_tickets_round ON tickets(testing_round);
+        ''')
+
+initialize()
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+
+def check_setup():
+    if not ADMIN_PASSWORD or not SECRET or len(SECRET) < 32:
+        raise HTTPException(503, 'Set PERPERIS_QA_PASSWORD and PERPERIS_QA_SECRET (32+ characters) before using this app')
+
+
+def session_sig(value: str):
+    return hmac.new(SECRET.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def current_user(request: Request):
+    check_setup()
+    value = request.cookies.get('qa_session','')
+    if not value.startswith('admin.') or not hmac.compare_digest(value.split('.',1)[1], session_sig('admin')):
+        raise HTTPException(401,'Sign in required')
+    return 'Admin'
+
+
+def guard_mutation(request: Request, user: str = Depends(current_user)):
+    # Local-first prototype: same-origin JSON requests must provide this header.
+    if request.headers.get('x-qa-request') != '1':
+        raise HTTPException(403, 'Missing request header')
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        raise HTTPException(403, 'Cross-origin request blocked')
+    return user
+
+class SignIn(BaseModel):
+    password: str
+
+class TicketCreate(BaseModel):
+    title: str = Field(min_length=3,max_length=180)
+    description: str = Field(default='',max_length=10000)
+    reporter: str = Field(min_length=1,max_length=100)
+    category: str = 'ui_ux'
+    severity: str = 'medium'
+    testing_round: str = Field(min_length=1,max_length=48)
+    area: str = Field(default='',max_length=120)
+    environment: str = Field(default='production',max_length=70)
+    deploy_version: str = Field(default='',max_length=70)
+    assigned_to: str = Field(default='',max_length=100)
+    issue_url: str = Field(default='',max_length=500)
+
+class TicketUpdate(BaseModel):
+    status: str
+    assigned_to: str = Field(default='',max_length=100)
+    resolution_notes: str = Field(default='',max_length=10000)
+    resolution_round: str = Field(default='',max_length=48)
+
+@APP.get('/', response_class=HTMLResponse)
+def index():
+    return FileResponse(ROOT/'static'/'index.html',media_type='text/html')
+
+@APP.get('/static/{filename}')
+def asset(filename: str):
+    if filename not in ('app.js','styles.css'):
+        raise HTTPException(404)
+    return FileResponse(ROOT/'static'/filename)
+
+@APP.post('/api/login')
+def login(payload: SignIn,response:Response):
+    check_setup()
+    if not hmac.compare_digest(payload.password,ADMIN_PASSWORD):
+        raise HTTPException(401,'Incorrect password')
+    response.set_cookie('qa_session','admin.'+session_sig('admin'),httponly=True,samesite='strict',secure=os.getenv('PERPERIS_QA_HTTPS')=='1',max_age=86400)
+    return {'ok':True}
+
+@APP.post('/api/logout')
+def logout(response:Response, user:str=Depends(guard_mutation)):
+    response.delete_cookie('qa_session')
+    return {'ok':True}
+
+@APP.get('/api/me')
+def me(user:str=Depends(current_user)):
+    return {'name':user}
+
+
+def validate_enum(value, choices, field):
+    if value not in choices:
+        raise HTTPException(422,f'Invalid {field}')
+
+@APP.get('/api/tickets')
+def tickets(user:str=Depends(current_user)):
+    with connection() as db:
+        return {'tickets':[dict(row) for row in db.execute('SELECT * FROM tickets ORDER BY created_at DESC, id DESC').fetchall()]}
+
+@APP.post('/api/tickets',status_code=201)
+def create_ticket(payload:TicketCreate,user:str=Depends(guard_mutation)):
+    validate_enum(payload.category,VALID_CATEGORY,'category')
+    validate_enum(payload.severity,VALID_SEVERITY,'severity')
+    dt=now()
+    with connection() as db:
+        c=db.execute('''INSERT INTO tickets(title,description,reporter,category,severity,status,testing_round,area,environment,deploy_version,assigned_to,issue_url,created_at,updated_at)
+         VALUES(?,?,?,?,?,'reported',?,?,?,?,?,?,?,?)''',
+         (payload.title.strip(),payload.description,payload.reporter.strip(),payload.category,payload.severity,payload.testing_round.strip(),payload.area,payload.environment,payload.deploy_version,payload.assigned_to,payload.issue_url,dt,dt))
+        ticket_id=c.lastrowid
+        db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,NULL,?,?,?)',(ticket_id,'reported',user,dt))
+        return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
+
+@APP.patch('/api/tickets/{ticket_id}')
+def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_mutation)):
+    validate_enum(payload.status,VALID_STATUS,'status')
+    dt=now()
+    with connection() as db:
+        old=db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone()
+        if old is None: raise HTTPException(404,'Ticket not found')
+        fixed_at=old['fixed_at'] or (dt if payload.status in ('fixed','deployed','verified','closed') else None)
+        deployed_at=old['deployed_at'] or (dt if payload.status in ('deployed','verified','closed') else None)
+        verified_at=old['verified_at'] or (dt if payload.status in ('verified','closed') else None)
+        closed_at=old['closed_at'] or (dt if payload.status == 'closed' else None)
+        fixed_round=old['fixed_round'] or (payload.resolution_round.strip() or old['testing_round'] if fixed_at and not old['fixed_at'] else None)
+        verified_round=old['verified_round'] or (payload.resolution_round.strip() or old['testing_round'] if verified_at and not old['verified_at'] else None)
+        db.execute('''UPDATE tickets SET status=?,assigned_to=?,resolution_notes=?,updated_at=?,fixed_at=?,deployed_at=?,verified_at=?,closed_at=?,fixed_round=?,verified_round=? WHERE id=?''',
+                   (payload.status,payload.assigned_to,payload.resolution_notes,dt,fixed_at,deployed_at,verified_at,closed_at,fixed_round,verified_round,ticket_id))
+        if old['status']!=payload.status:
+            db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at) VALUES(?,?,?,?,?)',(ticket_id,old['status'],payload.status,user,dt))
+        return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
+
+@APP.get('/api/analytics')
+def analytics(user:str=Depends(current_user)):
+    with connection() as db:
+        rows=[dict(x) for x in db.execute('SELECT * FROM tickets').fetchall()]
+    categories={};severity={};reporters={};rounds={}
+    closed={'verified','closed'}
+    for t in rows:
+        for d,k in [(categories,'category'),(severity,'severity'),(reporters,'reporter')]: d[t[k]]=d.get(t[k],0)+1
+        rounds.setdefault(t['testing_round'],{'round':t['testing_round'],'found':0,'fixed':0,'verified':0})['found']+=1
+        if t['fixed_at']:
+            rr=t['fixed_round'] or t['testing_round']
+            rounds.setdefault(rr,{'round':rr,'found':0,'fixed':0,'verified':0})['fixed']+=1
+        if t['verified_at']:
+            rr=t['verified_round'] or t['testing_round']
+            rounds.setdefault(rr,{'round':rr,'found':0,'fixed':0,'verified':0})['verified']+=1
+    found=len(rows)
+    verified=sum(bool(t['verified_at']) for t in rows)
+    resolved=sum(bool(t['fixed_at']) for t in rows)
+    open_now=sum(t['status'] not in closed for t in rows)
+    order=sorted(rounds, key=lambda x:(0,int(x[1:])) if x[1:].isdigit() and x.lower().startswith('r') else (1,x.casefold()))
+    round_data=[rounds[key] for key in order]
+    # Crossover is based on per-round discoveries vs fixes; not a cumulative backlog claim.
+    cross=next((r['round'] for r in round_data if r['found']>0 and r['fixed']>=r['found']),None)
+    return {'total':found,'open':open_now,'fixed':resolved,'verified':verified,'closed':sum(t['status']=='closed' for t in rows),
+            'critical':severity.get('critical',0),'severity':severity,'categories':categories,'reporters':reporters,
+            'rounds':round_data,'crossover':cross,'backlog':found-verified,
+            'analytics_note':'Found is counted in its discovery round; fixed/verified in the round the status was first recorded. Backlog uses found minus verified.'}
