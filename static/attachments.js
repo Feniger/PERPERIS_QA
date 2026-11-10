@@ -1,9 +1,10 @@
 /* One private screenshot queue for paste, drop and file-picker selection. */
 'use strict';
 window.qaScreenshots = {
-  queue: [], urls: [],
+  queue: [], urls: [], ticketId:null,
   enabled() {return !!qaIdentity.config?.attachments_enabled;},
   reset(ticketId=null) {
+    this.ticketId=ticketId;
     this.queue=[];this.urls.forEach(url=>URL.revokeObjectURL(url));this.urls=[];
     document.getElementById('screenshot-queue').replaceChildren();
     document.getElementById('screenshot-input').value='';
@@ -38,7 +39,7 @@ window.qaScreenshots = {
   async load(ticketId) {
     const res=await fetch(`/api/tickets/${ticketId}/attachments`,{credentials:'same-origin'});
     if(!res.ok)throw new Error('Unable to load screenshots.');
-    const data=await res.json();const mount=document.getElementById('screenshot-existing');mount.replaceChildren();
+    const data=await res.json();if(this.ticketId!==ticketId)return;const mount=document.getElementById('screenshot-existing');mount.replaceChildren();
     for(const item of data.attachments){
       const row=document.createElement('div');row.className='screenshot-item';
       const link=document.createElement('a');link.href='/api/attachments/'+encodeURIComponent(item.id);link.target='_blank';link.rel='noopener noreferrer';

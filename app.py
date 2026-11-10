@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -12,7 +11,8 @@ from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, HTTPException, Request, Response, Depends
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, field_validator
 from database import Database
 import identity
 import attachments
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
         DATABASE.close()
 
 
-APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, lifespan=lifespan)
+APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 VALID_STATUS = {'reported','triaged','in_progress','fixed','deployed','verified','closed','reopened'}
 VALID_SEVERITY = {'critical','high','medium','low'}
 VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','auth','deployment','other'}
@@ -88,18 +88,18 @@ def current_user(request: Request):
     if identity.mode() == 'identity':
         return identity.current(DATABASE, request.cookies.get('qa_session', ''))
     value = request.cookies.get('qa_session','')
-    if not value.startswith('admin.') or not hmac.compare_digest(value.split('.',1)[1], session_sig('admin')):
+    if not value.startswith('admin.') or not hmac.compare_digest(value.split('.',1)[1].encode(), session_sig('admin').encode()):
         raise HTTPException(401,'Sign in required')
     return identity.Principal('Admin')
 
 
-def guard_mutation(request: Request, user: str = Depends(current_user)):
+def guard_mutation(request: Request, user: identity.Principal = Depends(current_user)):
     identity.require_origin(request)
     return user
 
 
 class SignIn(BaseModel):
-    password: str
+    password: str = Field(max_length=1024)
 
 class TicketCreate(BaseModel):
     title: str = Field(min_length=3,max_length=180)
@@ -113,6 +113,11 @@ class TicketCreate(BaseModel):
     deploy_version: str = Field(default='',max_length=70)
     assigned_to: str = Field(default='',max_length=100)
     issue_url: str = Field(default='',max_length=500)
+
+    @field_validator('title', 'reporter', 'testing_round', mode='before')
+    @classmethod
+    def strip_required_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 class TicketUpdate(BaseModel):
     status: str
@@ -136,13 +141,13 @@ def login(payload: SignIn,response:Response):
     check_setup()
     if identity.mode() != 'local_shared':
         raise HTTPException(404, 'Use verified identity sign-in')
-    if not hmac.compare_digest(payload.password,ADMIN_PASSWORD):
+    if not hmac.compare_digest(payload.password.encode(),ADMIN_PASSWORD.encode()):
         raise HTTPException(401,'Incorrect password')
     response.set_cookie('qa_session','admin.'+session_sig('admin'),httponly=True,samesite='strict',secure=os.getenv('PERPERIS_QA_HTTPS')=='1',max_age=86400)
     return {'ok':True}
 
 @APP.post('/api/logout')
-def logout(response:Response, user:str=Depends(guard_mutation)):
+def logout(response:Response, user:identity.Principal=Depends(guard_mutation)):
     if user.session_hash:
         with connection(write=True) as db:
             db.execute('UPDATE qa_sessions SET revoked_at=? WHERE token_hash=?', (int(time.time()), user.session_hash))
@@ -151,7 +156,7 @@ def logout(response:Response, user:str=Depends(guard_mutation)):
     return {'ok':True}
 
 @APP.get('/api/me')
-def me(user:str=Depends(current_user)):
+def me(user:identity.Principal=Depends(current_user)):
     return {'name':user.name, 'role': user.role}
 
 
@@ -160,12 +165,12 @@ def validate_enum(value, choices, field):
         raise HTTPException(422,f'Invalid {field}')
 
 @APP.get('/api/tickets')
-def tickets(user:str=Depends(current_user)):
+def tickets(user:identity.Principal=Depends(current_user)):
     with connection() as db:
         return {'tickets':[dict(row) for row in db.execute('SELECT * FROM tickets ORDER BY created_at DESC, id DESC').fetchall()]}
 
 @APP.post('/api/tickets',status_code=201)
-def create_ticket(payload:TicketCreate,user:str=Depends(guard_mutation)):
+def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mutation)):
     validate_enum(payload.category,VALID_CATEGORY,'category')
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
     dt=now()
@@ -181,7 +186,7 @@ def create_ticket(payload:TicketCreate,user:str=Depends(guard_mutation)):
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
 
 @APP.patch('/api/tickets/{ticket_id}')
-def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_mutation)):
+def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Depends(guard_mutation)):
     validate_enum(payload.status,VALID_STATUS,'status')
     with connection(write=True) as db:
         identity.authorize_member(db, user)
@@ -211,7 +216,7 @@ def update_ticket(ticket_id:int,payload:TicketUpdate,user:str=Depends(guard_muta
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
 
 @APP.get('/api/analytics')
-def analytics(user:str=Depends(current_user)):
+def analytics(user:identity.Principal=Depends(current_user)):
     with connection() as db:
         rows=[dict(x) for x in db.execute('SELECT * FROM tickets').fetchall()]
     categories={};severity={};reporters={};rounds={}
@@ -301,6 +306,13 @@ async def security_headers(request: Request, call_next):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' blob:; font-src 'self'; connect-src 'self' https://identitytoolkit.googleapis.com; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    )
+    if identity.mode() == 'identity':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
     return response
@@ -340,3 +352,13 @@ def get_attachment(attachment_id: str, user=Depends(current_user)):
 def delete_attachment(attachment_id: str, user=Depends(guard_mutation)):
     attachment_service().delete(attachment_id, user)
     return {'ok': True}
+
+
+@APP.exception_handler(RequestValidationError)
+async def private_validation_error(request: Request, exc: RequestValidationError):
+    # FastAPI normally echoes invalid inputs (including password/ID-token fields).
+    # Return locations and generic messages only; never log private request data.
+    return JSONResponse(status_code=422, content={'detail': [
+        {'loc': error['loc'], 'msg': 'Invalid input', 'type': error['type']}
+        for error in exc.errors()
+    ]})

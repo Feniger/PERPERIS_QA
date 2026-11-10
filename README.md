@@ -87,3 +87,11 @@ QA identity project; no live provider or public deployment is enabled by this co
 paste/drop/file workflow, local development storage, private existing-bucket GCS
 adapter, image validation, quotas, permissions and reconciliation. It creates no
 bucket and does not permit cloud startup.
+
+### Build and release gates (QA-CLOUD-05)
+
+[Build hardening](docs/QA-CLOUD-05.md) documents the hashed runtime lock,
+non-root container, CSP/privacy checks and local browser/container tests.
+[Remaining release plan](docs/RELEASE_PLAN.md) records the separate private staging,
+budget, IAM, backup/restore and production-cutover work. Cloud startup is still
+blocked; no infrastructure or deployment is enabled by building the image.

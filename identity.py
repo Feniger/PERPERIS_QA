@@ -31,6 +31,8 @@ def mode():
 
 def check_configuration():
     if mode() == 'identity':
+        if 'FIREBASE_AUTH_EMULATOR_HOST' in os.environ:
+            raise RuntimeError('Emulator authentication is not permitted')
         origin = os.getenv('PERPERIS_QA_ORIGIN', '')
         parsed = urlsplit(origin)
         if (not parsed.hostname or parsed.scheme != 'https' or parsed.path or
@@ -57,9 +59,11 @@ def provider_app():
         # Called lazily after explicit identity configuration, using ADC only.
         try:
             provider = firebase_admin.initialize_app(options={
-                'projectId': os.environ['PERPERIS_QA_IDENTITY_PROJECT']}, name='perperis-qa')
+                'projectId': os.environ['PERPERIS_QA_IDENTITY_PROJECT'], 'httpTimeout': 10}, name='perperis-qa')
         except ValueError:
             provider = firebase_admin.get_app('perperis-qa')
+    if provider.project_id != os.environ['PERPERIS_QA_IDENTITY_PROJECT']:
+        raise ValueError('Identity project mismatch')
     return provider
 
 
@@ -103,6 +107,8 @@ def authorize_member(db, user):
     row = db.execute('SELECT role,state FROM qa_members WHERE subject=?', (user.subject,)).fetchone()
     if row is None or row['state'] != 'active' or row['role'] != user.role:
         raise HTTPException(403, 'Membership changed; sign in again')
+    if user.session_hash and db.execute('SELECT token_hash FROM qa_sessions WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?', (user.session_hash, int(time.time()))).fetchone() is None:
+        raise HTTPException(401, 'Sign in again')
 
 
 def security_event(db, actor, target, action):

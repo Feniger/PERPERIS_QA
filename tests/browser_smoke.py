@@ -17,7 +17,7 @@ import tempfile
 import time
 from urllib.request import urlopen
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 
 def main():
@@ -84,13 +84,13 @@ def main():
                         assert page.locator('#k-total').inner_text()=='1'
                         page.locator('#search').fill('Synthetic browser')
                         page.locator('#ticket-rows tr').click()
-                        page.wait_for_function("document.querySelectorAll('#screenshot-existing img').length===3")
+                        expect(page.locator('#screenshot-existing img')).to_have_count(3)
                         page.locator('#screenshot-existing button').first.click()
-                        page.wait_for_function("document.querySelectorAll('#screenshot-existing img').length===2")
+                        expect(page.locator('#screenshot-existing img')).to_have_count(2)
                         page.locator('#edit-status').select_option('fixed')
                         page.locator('[name=resolution_round]').fill('R02')
                         page.locator('#form-submit').click()
-                        page.wait_for_function("document.querySelector('#k-fixed').textContent==='1'")
+                        expect(page.locator('#k-fixed')).to_have_text('1')
                         page.locator('#modal').wait_for(state='hidden')
                         page.locator('#new-ticket').click()
                         page.locator('[name=title]').fill('Synthetic upload retry')
@@ -104,11 +104,11 @@ def main():
                                 route.continue_()
                         page.route('**/api/tickets/*/attachments',failed_upload)
                         page.locator('#form-submit').click()
-                        page.wait_for_function("document.querySelector('#form-error').textContent.includes('Failed screenshots remain queued')")
+                        expect(page.locator('#form-error')).to_contain_text('Failed screenshots remain queued')
                         assert page.locator('#screenshot-queue img').count()==1
                         page.locator('#form-submit').click()
                         page.locator('#modal').wait_for(state='hidden')
-                        page.wait_for_function("document.querySelector('#k-total').textContent==='2'")
+                        expect(page.locator('#k-total')).to_have_text('2')
                         page.locator('#logout').click()
                         page.locator('#login').wait_for(state='visible')
                         # Browser-only managed provider exercise; no real provider requests.
@@ -123,11 +123,11 @@ def main():
                         page.locator('#email').fill('synthetic@example.test')
                         page.locator('#password').fill('synthetic-registration-password')
                         page.locator('#register').click()
-                        page.wait_for_function("document.querySelector('#login-error').textContent.includes('Check your email')")
+                        expect(page.locator('#login-error')).to_contain_text('Check your email')
                         assert calls==['signUp','sendOobCode']
                         page.locator('#password').fill('synthetic-registration-password')
                         page.locator('#login-form button.primary').click()
-                        page.wait_for_function("document.querySelector('#login-error').textContent.includes('pending approval')")
+                        expect(page.locator('#login-error')).to_contain_text('pending approval')
                         assert page.evaluate('Object.keys(localStorage).length')==0
                         assert page.locator('#password').input_value()==''
                         assert not errors, errors
