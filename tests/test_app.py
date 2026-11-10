@@ -9,6 +9,7 @@ os.environ['PERPERIS_QA_DB'] = str(Path(TMP.name)/'test.sqlite3')
 os.environ['PERPERIS_QA_PASSWORD'] = 'test-password-long-unique'
 os.environ['PERPERIS_QA_SECRET'] = 'test-secret-0123456789-0123456789-0123456789'
 os.environ['PERPERIS_QA_ENV'] = 'local'
+os.environ['PERPERIS_QA_AUTH_MODE'] = 'local_shared'
 os.environ.pop('PERPERIS_QA_DATABASE_URL', None)
 
 from fastapi.testclient import TestClient
