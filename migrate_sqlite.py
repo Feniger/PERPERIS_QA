@@ -42,8 +42,10 @@ def snapshot(source):
             if snap.execute('PRAGMA foreign_key_check').fetchall():
                 raise ImportRejected('Source foreign key check failed')
             result = {}
-            if snap.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='qa_members'").fetchone() and snap.execute('SELECT COUNT(*) FROM qa_members').fetchone()[0]:
-                raise ImportRejected('Identity-bearing SQLite databases require a separate reviewed migration')
+            for protected_table in ('qa_attachments', 'qa_members', 'qa_sessions', 'qa_security_events', 'ticket_changes'):
+                exists = snap.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (protected_table,)).fetchone()
+                if exists and snap.execute(f'SELECT COUNT(*) FROM {protected_table}').fetchone()[0]:
+                    raise ImportRejected('Extended identity, attachment or audit data requires a separately reviewed migration')
             sequences = dict(snap.execute('SELECT name,seq FROM sqlite_sequence').fetchall())
             for table, required in (('tickets', TICKET_COLUMNS), ('ticket_events', EVENT_COLUMNS)):
                 columns = {row['name'] for row in snap.execute(f'PRAGMA table_info({table})')}

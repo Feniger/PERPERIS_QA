@@ -4,6 +4,9 @@ Uses a temporary DB/server; managed-provider network calls are intercepted and
 never send email or create users. Run from repository root.
 """
 import json
+import base64
+from io import BytesIO
+from PIL import Image
 import os
 from pathlib import Path
 import secrets
@@ -23,7 +26,9 @@ def main():
         env = {k:v for k,v in os.environ.items() if k not in {'K_SERVICE','PERPERIS_QA_DATABASE_URL'}}
         env.update(PERPERIS_QA_ENV='local', PERPERIS_QA_AUTH_MODE='local_shared',
                    PERPERIS_QA_DB=str(Path(tmp)/'browser.sqlite3'), PERPERIS_QA_PASSWORD=password,
-                   PERPERIS_QA_SECRET=secrets.token_urlsafe(48))
+                   PERPERIS_QA_SECRET=secrets.token_urlsafe(48),
+                   PERPERIS_QA_ATTACHMENT_BACKEND='local',
+                   PERPERIS_QA_ATTACHMENT_DIR=str(Path(tmp)/'screenshots'))
         with socket.socket() as available:
             available.bind(('127.0.0.1',0))
             port=available.getsockname()[1]
@@ -59,15 +64,51 @@ def main():
                         page.locator('#new-ticket').click()
                         page.locator('[name=title]').fill('Synthetic browser report')
                         page.locator('[name=description]').fill('Disposable smoke-test data')
+                        image=BytesIO()
+                        with Image.new('RGB',(12,8),'green') as synthetic:
+                            synthetic.save(image,format='PNG')
+                        file={'name':'synthetic.png','mimeType':'image/png','buffer':image.getvalue()}
+                        page.locator('#screenshot-input').set_input_files(file)
+                        encoded=base64.b64encode(image.getvalue()).decode()
+                        for event in ('paste','drop'):
+                            page.evaluate('''([encoded,event])=>{
+                                const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+                                const transfer=new DataTransfer();transfer.items.add(new File([bytes],'synthetic.png',{type:'image/png'}));
+                                const target=document.querySelector('#screenshot-drop');
+                                target.dispatchEvent(event==='paste'?new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}):new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));
+                            }''',[encoded,event])
+                        assert page.locator('#screenshot-queue img').count()==3
                         page.locator('#form-submit').click()
+                        page.locator('#modal').wait_for(state='hidden')
                         page.locator('#ticket-rows tr').wait_for()
                         assert page.locator('#k-total').inner_text()=='1'
                         page.locator('#search').fill('Synthetic browser')
                         page.locator('#ticket-rows tr').click()
+                        page.wait_for_function("document.querySelectorAll('#screenshot-existing img').length===3")
+                        page.locator('#screenshot-existing button').first.click()
+                        page.wait_for_function("document.querySelectorAll('#screenshot-existing img').length===2")
                         page.locator('#edit-status').select_option('fixed')
                         page.locator('[name=resolution_round]').fill('R02')
                         page.locator('#form-submit').click()
                         page.wait_for_function("document.querySelector('#k-fixed').textContent==='1'")
+                        page.locator('#modal').wait_for(state='hidden')
+                        page.locator('#new-ticket').click()
+                        page.locator('[name=title]').fill('Synthetic upload retry')
+                        page.locator('#screenshot-input').set_input_files(file)
+                        fail_once=[True]
+                        def failed_upload(route):
+                            if route.request.method=='POST' and fail_once[0]:
+                                fail_once[0]=False
+                                route.fulfill(status=503,json={'detail':'Synthetic upload outage'})
+                            else:
+                                route.continue_()
+                        page.route('**/api/tickets/*/attachments',failed_upload)
+                        page.locator('#form-submit').click()
+                        page.wait_for_function("document.querySelector('#form-error').textContent.includes('Failed screenshots remain queued')")
+                        assert page.locator('#screenshot-queue img').count()==1
+                        page.locator('#form-submit').click()
+                        page.locator('#modal').wait_for(state='hidden')
+                        page.wait_for_function("document.querySelector('#k-total').textContent==='2'")
                         page.locator('#logout').click()
                         page.locator('#login').wait_for(state='visible')
                         # Browser-only managed provider exercise; no real provider requests.
@@ -90,7 +131,7 @@ def main():
                         assert page.evaluate('Object.keys(localStorage).length')==0
                         assert page.locator('#password').input_value()==''
                         assert not errors, errors
-                        print('Browser smoke passed: local tickets/metrics, managed signup/verification instructions and pending access denial.')
+                        print('Browser smoke passed: local tickets/metrics, paste/drop/file screenshots, deletion and failed-upload retry, managed signup/verification instructions and pending access denial.')
                     finally:
                         browser.close()
             finally:

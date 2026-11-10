@@ -15,6 +15,8 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from database import Database
 import identity
+import attachments
+from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv('PERPERIS_QA_DB', str(ROOT / 'qa.sqlite3')))
@@ -41,6 +43,7 @@ async def lifespan(app: FastAPI):
     try:
         identity.check_configuration()
         initialize()
+        APP.state.attachments = attachments.configured_store()
         yield
     finally:
         DATABASE.close()
@@ -124,7 +127,7 @@ def index():
 
 @APP.get('/static/{filename}')
 def asset(filename: str):
-    if filename not in ('app.js','styles.css','auth.js'):
+    if filename not in ('app.js','styles.css','auth.js','attachments.js'):
         raise HTTPException(404)
     return FileResponse(ROOT/'static'/filename)
 
@@ -249,7 +252,7 @@ class MemberUpdate(BaseModel):
 def auth_config():
     check_runtime()
     identity.check_configuration()
-    result = {'mode': identity.mode()}
+    result = {'mode': identity.mode(), 'attachments_enabled': getattr(APP.state, 'attachments', None) is not None}
     if identity.mode() == 'identity':
         # Browser API key is public project configuration, never an Admin SDK key.
         result['web_api_key'] = os.getenv('PERPERIS_QA_IDENTITY_WEB_API_KEY', '')
@@ -301,3 +304,39 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
     return response
+
+
+
+def attachment_service():
+    store = getattr(APP.state, 'attachments', None)
+    if store is None:
+        raise HTTPException(404, 'Screenshots are not enabled')
+    return attachments.Attachments(DATABASE, store)
+
+
+@APP.post('/api/tickets/{ticket_id}/attachments', status_code=201)
+async def upload_attachment(ticket_id: int, request: Request, user=Depends(guard_mutation)):
+    service = attachment_service()
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > attachments.MAX_BYTES:
+            raise HTTPException(413, 'Screenshot exceeds 10 MiB')
+        content.extend(chunk)
+    return await run_in_threadpool(service.upload, ticket_id, bytes(content), user)
+
+
+@APP.get('/api/tickets/{ticket_id}/attachments')
+def list_attachments(ticket_id: int, user=Depends(current_user)):
+    return {'attachments': attachment_service().list(ticket_id)}
+
+
+@APP.get('/api/attachments/{attachment_id}')
+def get_attachment(attachment_id: str, user=Depends(current_user)):
+    return Response(attachment_service().read(attachment_id), media_type='image/png', headers={
+        'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline; filename="screenshot.png"'})
+
+
+@APP.delete('/api/attachments/{attachment_id}')
+def delete_attachment(attachment_id: str, user=Depends(guard_mutation)):
+    attachment_service().delete(attachment_id, user)
+    return {'ok': True}

@@ -80,3 +80,10 @@ PostgreSQL but does **not** permit cloud startup or make shared-password auth sa
 verified email, pending membership, Admin/Developer/Tester permissions, revocable
 sessions and explicit private Admin bootstrap. It requires a separately configured
 QA identity project; no live provider or public deployment is enabled by this code.
+
+### Private screenshots (QA-CLOUD-04)
+
+[Screenshot storage runbook](docs/QA-CLOUD-04.md) covers the disabled-by-default
+paste/drop/file workflow, local development storage, private existing-bucket GCS
+adapter, image validation, quotas, permissions and reconciliation. It creates no
+bucket and does not permit cloud startup.

@@ -19,7 +19,7 @@ class IdentityTests(unittest.TestCase):
         self.db = self.make_database()
         self.enterContext(patch.object(app, 'DATABASE', self.db))
         self.enterContext(patch.dict(os.environ, {
-            'PERPERIS_QA_AUTH_MODE': 'identity', 'PERPERIS_QA_ENV': 'local',
+            'PERPERIS_QA_ATTACHMENT_BACKEND': 'disabled', 'PERPERIS_QA_AUTH_MODE': 'identity', 'PERPERIS_QA_ENV': 'local',
             'PERPERIS_QA_ORIGIN': 'https://qa.example.test',
             'PERPERIS_QA_IDENTITY_PROJECT': 'synthetic-qa-project',
             'PERPERIS_QA_SECRET': 'synthetic-throttle-secret-' * 3}))
