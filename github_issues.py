@@ -95,6 +95,17 @@ def status_comment(status: str, actor: str, comment: str) -> str:
     return head + ('\n\n' + neutralize(comment.strip()) if comment.strip() else '')
 
 
+SCREENSHOT_MARKER = '<!-- perperis-qa:screenshots -->'
+
+
+def screenshot_comment(count: int, link: str) -> str:
+    """The single bot comment per issue that points to its screenshots in QA (edited, never reposted)."""
+    if count <= 0:
+        return f'{SCREENSHOT_MARKER}\n📎 No screenshots in PERPERIS QA any more: {link}'
+    plural = 's' if count != 1 else ''
+    return f'{SCREENSHOT_MARKER}\n📎 {count} screenshot{plural} in PERPERIS QA: {link}'
+
+
 @dataclass(frozen=True)
 class Config:
     app_id: str
@@ -564,6 +575,38 @@ class GitHubIssues:
             events = []
         return to_ticket(updated, events, rounds)
 
+    def upsert_screenshot_comment(self, number: int, count: int, link: str) -> str:
+        """Edit QA's screenshot comment on the issue, or post it once. Returns 'edited', 'posted' or 'none'."""
+        repo = self.config.repo
+        headers = {'Authorization': f'token {self._installation_token()}'}
+        existing = None
+        for comment in self._get_all(f'/repos/{repo}/issues/{number}/comments', {'per_page': 100}):
+            app = comment.get('performed_via_github_app') or {}
+            ours = (comment.get('user') or {}).get('type') == 'Bot' and (not app or str(app.get('id')) == str(self.config.app_id))
+            if ours and (comment.get('body') or '').startswith(SCREENSHOT_MARKER):
+                existing = comment
+                break
+        body = screenshot_comment(count, link)
+        try:
+            if existing is not None:
+                if existing.get('body') == body:
+                    return 'none'
+                response = self._client.patch(f'/repos/{repo}/issues/comments/{existing["id"]}', json={'body': body},
+                                              headers=headers)
+                result = 'edited'
+            elif count > 0:
+                response = self._client.post(f'/repos/{repo}/issues/{number}/comments', json={'body': body},
+                                             headers=headers)
+                result = 'posted'
+            else:
+                return 'none'
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if response.status_code not in (200, 201):
+            raise GitHubUnavailable(f'GitHub comment failed ({response.status_code})')
+        self.invalidate()
+        return result
+
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']
 
@@ -592,6 +635,7 @@ class MemoryIssues:
         self._issues: dict[int, dict] = {}
         self._events: dict[int, list[dict]] = {}
         self.comments: dict[int, list[str]] = {}
+        self.screenshot_comments: dict[int, str] = {}
         self._lock = threading.Lock()
         self._tick = 0
 
@@ -653,6 +697,19 @@ class MemoryIssues:
             issue['updated_at'] = now
             self.comments.setdefault(number, []).append(status_comment(status, actor, comment))
             return to_ticket(issue, list(events), testing_rounds(self._milestones))
+
+    def upsert_screenshot_comment(self, number: int, count: int, link: str) -> str:
+        with self._lock:
+            issue = self._issues.get(number)
+            if issue is None:
+                raise TicketNotFound(number)
+            body = screenshot_comment(count, link)
+            previous = self.screenshot_comments.get(number)
+            if previous == body or (previous is None and count <= 0):
+                return 'none'
+            self.screenshot_comments[number] = body
+            issue['updated_at'] = self._now()   # like GitHub: a comment changes the issue's updated_at
+            return 'edited' if previous is not None else 'posted'
 
     def tickets(self) -> list[dict]:
         with self._lock:

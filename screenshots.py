@@ -146,6 +146,7 @@ class MemoryStore:
 
     def __init__(self):
         self.objects: dict[str, tuple[int, bytes, str, dict]] = {}
+        self.custom_times: dict[str, float] = {}
         self._generation = 0
         self._lock = threading.Lock()
 
@@ -172,6 +173,22 @@ class MemoryStore:
     def delete(self, name):
         with self._lock:
             self.objects.pop(name, None)
+            self.custom_times.pop(name, None)
+
+    def set_custom_time(self, name, when: float):
+        with self._lock:
+            if name in self.objects:
+                if self.custom_times.get(name, 0) > when:   # like Cloud Storage: it can never move back
+                    raise ValueError('customTime cannot decrease')
+                self.custom_times[name] = when
+
+    def rewrite_without_custom_time(self, name):
+        with self._lock:
+            if name in self.objects:
+                _, data, content_type, metadata = self.objects[name]
+                self._generation += 1
+                self.objects[name] = (self._generation, data, content_type, metadata)
+                self.custom_times.pop(name, None)
 
     def check_private(self):
         return True
@@ -229,6 +246,28 @@ class BucketStore:
             self.bucket.blob(name).delete(timeout=15, retry=self.retry)
         except Missing:
             pass
+
+    def set_custom_time(self, name, when: float):
+        """Starts the lifecycle rule's 30-day clock (daysSinceCustomTime)."""
+        from datetime import datetime, timezone
+        blob = self.bucket.blob(name)
+        blob.custom_time = datetime.fromtimestamp(when, timezone.utc)
+        blob.patch(timeout=15, retry=self.retry)
+
+    def rewrite_without_custom_time(self, name):
+        """customTime can't be removed or moved back; replacing the object with an identical copy
+        (same bytes and metadata, new generation) is Cloud Storage's documented reset."""
+        blob = self.bucket.blob(name)
+        blob.reload(timeout=10, retry=self.retry)
+        if blob.custom_time is None:
+            return
+        generation = blob.generation
+        data = blob.download_as_bytes(if_generation_match=generation, timeout=20, retry=self.retry)
+        fresh = self.bucket.blob(name)
+        fresh.cache_control = 'private, no-store'
+        fresh.metadata = dict(blob.metadata or {})
+        fresh.upload_from_string(data, content_type=blob.content_type, if_generation_match=generation, timeout=20,
+                                 retry=self.retry)
 
 
 def from_env(env=os.environ):
@@ -318,6 +357,27 @@ class Screenshots:
         if thumb:
             return thumbnail(data), 'image/webp'
         return data, content_type
+
+    def mark_verified(self, issue: int) -> int:
+        """Verify: set customTime on the issue's images so the lifecycle rule deletes them 30 days later.
+        Returns how many could not be marked (the 365-day limit still applies to those)."""
+        now, failed = self.clock(), 0
+        for obj in self._current(issue):
+            try:
+                self.store.set_custom_time(obj.name, now)
+            except Exception:
+                failed += 1
+        return failed
+
+    def clear_verified(self, issue: int) -> int:
+        """Reopen: rewrite the issue's images without customTime. Upload time is kept in metadata."""
+        failed = 0
+        for obj in self._current(issue):
+            try:
+                self.store.rewrite_without_custom_time(obj.name)
+            except Exception:
+                failed += 1
+        return failed
 
     def delete(self, issue: int, name: str, *, subject: str | None, is_admin: bool):
         full = object_name(issue, name)

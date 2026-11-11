@@ -45,7 +45,7 @@ async function initial(){
     $('email-label').classList.toggle('hidden',!managed());$('identity-actions').classList.toggle('hidden',!managed());$('email').required=managed();
     session=await api('/api/me');toggleSession(true);
     $('who').textContent=managed()?`${session.name} · ${session.role}`:'';
-    applyIdentityToQuick();applyTicketSource();route();await refresh();
+    applyIdentityToQuick();applyTicketSource();route();await refresh();openDeepLink();
   }
   catch(e){toggleSession(false);if(e.status===503) $('login-error').textContent=e.message;}
 }
@@ -66,13 +66,17 @@ async function refresh(){
 
 /* ---------- routing ---------- */
 const VIEWS = ['today','tickets'];
-function currentView(){const v=location.hash.slice(1);return VIEWS.includes(v)?v:'today';}
+/* #ticket-N (the link in the GitHub screenshot comment) opens that ticket on the Tickets view. */
+function deepLink(){const m=location.hash.match(/^#ticket-(\d+)$/);return m?Number(m[1]):null;}
+function currentView(){if(deepLink())return 'tickets';const v=location.hash.slice(1);return VIEWS.includes(v)?v:'today';}
+function openDeepLink(){const n=deepLink();if(n&&loaded&&tickets.some(t=>t.id===n)){openEdit(n);history.replaceState(null,'','#tickets');}}
 function route(){
   const view=currentView();
   VIEWS.forEach(v=>$(`view-${v}`).classList.toggle('hidden',v!==view));
   document.querySelectorAll('[data-view]').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   document.title=`PERPERIS / QA — ${view==='today'?'Today':'Tickets'}`;
   window.scrollTo(0,0);
+  openDeepLink();
 }
 window.addEventListener('hashchange',route);
 
@@ -296,6 +300,13 @@ $('ticket-form').addEventListener('submit',async e=>{
     else $('form-error').textContent=err.message;
   }finally{btn.disabled=false;}
 });
+
+/* A screenshot change edits QA's comment on the issue, which changes its updated_at; keep the open
+   ticket current so a status change right after does not report a conflict. */
+window.qaAfterScreenshotChange=async id=>{
+  await refresh();
+  if(editing&&editing.id===id){const fresh=tickets.find(t=>t.id===id);if(fresh)editing=fresh;}
+};
 
 /* ---------- wiring ---------- */
 document.querySelectorAll('[data-new-ticket]').forEach(b=>b.addEventListener('click',()=>newTicket()));

@@ -207,7 +207,23 @@ def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Dep
         raise HTTPException(409, 'Ticket changed; refresh before saving') from None
     except github_issues.GitHubUnavailable:
         raise HTTPException(502, 'GitHub could not be reached. The status was not changed; try again.') from None
+    apply_retention(ticket_id, payload.status, user)
     return {'ticket': ticket}
+
+
+def apply_retention(ticket_id: int, status: str, user: identity.Principal):
+    """Verify starts the 30-day deletion clock on the issue's screenshots; Reopen stops it.
+
+    Best effort: the status change has already happened, and the 365-day limit still applies."""
+    service = getattr(APP.state, 'screenshots', None)
+    if service is None or status not in {'verified', 'reopened'}:
+        return
+    try:
+        failed = service.mark_verified(ticket_id) if status == 'verified' else service.clear_verified(ticket_id)
+    except Exception:
+        failed = -1
+    if failed:
+        identity.security_event(user.subject, str(ticket_id), 'screenshot_retention_incomplete')
 
 
 @APP.post('/api/github/webhook', status_code=204)
@@ -324,6 +340,21 @@ def require_ticket(ticket_id: int):
         raise HTTPException(404, 'Ticket not found')
 
 
+def qa_origin(request: Request) -> str:
+    return os.getenv('PERPERIS_QA_ORIGIN', '') if identity.mode() == 'identity' else str(request.base_url).rstrip('/')
+
+
+def update_screenshot_comment(ticket_id: int, origin: str, user: identity.Principal):
+    """One bot comment per issue, "📎 N screenshots in PERPERIS QA: <link>", edited rather than reposted.
+
+    Best effort: the screenshot change has already happened; a later change corrects the count."""
+    try:
+        count = APP.state.screenshots.count(ticket_id)
+        tickets_source().upsert_screenshot_comment(ticket_id, count, f'{origin}/#ticket-{ticket_id}')
+    except Exception:
+        identity.security_event(user.subject, str(ticket_id), 'screenshot_comment_failed')
+
+
 def screenshot_errors(action):
     try:
         return action()
@@ -374,6 +405,7 @@ async def upload_screenshot(ticket_id: int, request: Request, user: identity.Pri
     item = await run_in_threadpool(screenshot_errors, lambda: service.upload(
         ticket_id, bytes(body), subject=user.subject, name=user.name, is_admin=user.role == 'Admin'))
     identity.security_event(user.subject, str(ticket_id), 'screenshot_uploaded')
+    await run_in_threadpool(update_screenshot_comment, ticket_id, qa_origin(request), user)
     return {'screenshot': item}
 
 
@@ -387,10 +419,11 @@ def view_screenshot(ticket_id: int, name: str, thumb: bool = False, user: identi
 
 
 @APP.delete('/api/tickets/{ticket_id}/screenshots/{name}', status_code=204)
-def delete_screenshot(ticket_id: int, name: str, user: identity.Principal = Depends(guard_mutation)):
+def delete_screenshot(ticket_id: int, name: str, request: Request, user: identity.Principal = Depends(guard_mutation)):
     service = screenshot_service()
     screenshot_errors(lambda: service.delete(ticket_id, name, subject=user.subject, is_admin=user.role == 'Admin'))
     identity.security_event(user.subject, str(ticket_id), 'screenshot_deleted')
+    update_screenshot_comment(ticket_id, qa_origin(request), user)
     return Response(status_code=204)
 
 

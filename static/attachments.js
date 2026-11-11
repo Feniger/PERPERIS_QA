@@ -71,6 +71,7 @@ window.qaScreenshots = {
       this.el('screenshot-retry').classList.remove('hidden');throw err;
     }finally{
       await this.load(ticketId).catch(()=>{});
+      await window.qaAfterScreenshotChange?.(ticketId);
     }
   },
   async load(ticketId) {
@@ -92,7 +93,7 @@ window.qaScreenshots = {
           remove.disabled=true;
           try{const r=await fetch(base,{method:'DELETE',credentials:'same-origin',headers:{'X-QA-Request':'1'}});
             if(!r.ok){let body;try{body=await r.json();}catch{body={};}throw new Error(body.detail||'Deletion failed.');}
-            await this.load(ticketId);}
+            await this.load(ticketId);await window.qaAfterScreenshotChange?.(ticketId);}
           catch(err){this.status(err.message);remove.disabled=false;}
         });
         row.append(remove);

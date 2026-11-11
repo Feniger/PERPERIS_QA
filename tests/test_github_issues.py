@@ -217,6 +217,8 @@ class FakeGitHub:
         self.created = []
         self.patched = []
         self.comments = []
+        self.thread = {}             # issue number -> list of comment dicts (as GitHub lists them)
+        self.comment_edits = []
         self.reads_down = False      # simulate GitHub outages for reads
         self.use_etags = False       # answer If-None-Match with 304 like GitHub
 
@@ -264,9 +266,23 @@ class FakeGitHub:
         if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/events'):
             number = int(path.split('/')[-2])
             return httpx.Response(200, json=self.events.get(number, []))
+        if path.startswith(f'/repos/{REPO}/issues/comments/') and request.method == 'PATCH':
+            comment_id = int(path.rsplit('/', 1)[-1])
+            body = json.loads(request.content)['body']
+            self.comment_edits.append((comment_id, body))
+            for thread in self.thread.values():
+                for comment in thread:
+                    if comment['id'] == comment_id:
+                        comment['body'] = body
+            return httpx.Response(200, json={'id': comment_id, 'body': body})
+        if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/comments') and request.method == 'GET':
+            return httpx.Response(200, json=self.thread.get(int(path.split('/')[-2]), []))
         if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/comments') and request.method == 'POST':
-            self.comments.append((int(path.split('/')[-2]), json.loads(request.content)['body']))
-            return httpx.Response(201, json={'id': len(self.comments)})
+            number, body = int(path.split('/')[-2]), json.loads(request.content)['body']
+            self.comments.append((number, body))
+            self.thread.setdefault(number, []).append({'id': 1000 + len(self.comments), 'body': body, 'user': {
+                'login': 'perperis-qa[bot]', 'type': 'Bot'}, 'performed_via_github_app': {'id': int(CONFIG.app_id)}})
+            return httpx.Response(201, json={'id': 1000 + len(self.comments)})
         if path.startswith(f'/repos/{REPO}/issues/') and path.rsplit('/', 1)[-1].isdigit():
             number = int(path.rsplit('/', 1)[-1])
             found = next((i for i in self.issues if i['number'] == number), None)
@@ -475,6 +491,50 @@ class Caching(unittest.TestCase):
                                            deploy_version='', reporter='Anna')
         self.assertEqual(ticket['reporter'], 'Anna')
         self.assertEqual(len(self.fake.created), 1)
+
+
+class ScreenshotComment(unittest.TestCase):
+    """Decision 4.1: one bot comment per issue, edited rather than reposted."""
+
+    def make(self, fake):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
+
+    def test_posts_once_then_edits_and_ignores_other_comments(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        fake.thread[1] = [
+            {'id': 1, 'body': gh.SCREENSHOT_MARKER + ' copied by a person', 'user': {'login': 'mallory', 'type': 'User'}},
+            {'id': 2, 'body': gh.SCREENSHOT_MARKER + ' another app', 'user': {'login': 'x[bot]', 'type': 'Bot'},
+             'performed_via_github_app': {'id': 1}}]
+        adapter = self.make(fake)
+        link = 'https://qa.example.test/#ticket-1'
+        self.assertEqual(adapter.upsert_screenshot_comment(1, 2, link), 'posted')
+        self.assertEqual(fake.comments, [(1, gh.SCREENSHOT_MARKER + '\n📎 2 screenshots in PERPERIS QA: ' + link)])
+        self.assertEqual(adapter.upsert_screenshot_comment(1, 1, link), 'edited')
+        self.assertEqual(adapter.upsert_screenshot_comment(1, 1, link), 'none')     # unchanged: no write
+        self.assertEqual(adapter.upsert_screenshot_comment(1, 0, link), 'edited')
+        self.assertEqual(len(fake.comments), 1)
+        self.assertEqual([body.splitlines()[1] for _, body in fake.comment_edits],
+                         ['📎 1 screenshot in PERPERIS QA: ' + link, '📎 No screenshots in PERPERIS QA any more: ' + link])
+        self.assertEqual([c['body'] for c in fake.thread[1][:2]],
+                         [gh.SCREENSHOT_MARKER + ' copied by a person', gh.SCREENSHOT_MARKER + ' another app'])
+
+    def test_nothing_is_posted_for_zero_and_errors_surface(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        adapter = self.make(fake)
+        self.assertEqual(adapter.upsert_screenshot_comment(1, 0, 'https://qa.example.test/#ticket-1'), 'none')
+        self.assertEqual(fake.comments, [])
+        fake.reads_down = True
+        with self.assertRaises(gh.GitHubUnavailable):
+            adapter.upsert_screenshot_comment(1, 1, 'https://qa.example.test/#ticket-1')
+
+    def test_memory_stand_in_bumps_updated_at(self):
+        memory = gh.MemoryIssues()
+        ticket = memory.create_issue(title='Memory', description='Expected x, saw y', severity='low', category='Other',
+                                     testing_round='R01', area='', environment='local', deploy_version='', reporter='T')
+        before = memory.tickets()[0]['updated_at']
+        self.assertEqual(memory.upsert_screenshot_comment(ticket['id'], 1, 'http://x/#ticket-1'), 'posted')
+        self.assertNotEqual(memory.tickets()[0]['updated_at'], before)
+        self.assertEqual(memory.upsert_screenshot_comment(ticket['id'], 1, 'http://x/#ticket-1'), 'none')
 
 
 class StatusChanges(unittest.TestCase):
