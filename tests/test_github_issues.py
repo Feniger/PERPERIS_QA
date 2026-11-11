@@ -215,6 +215,17 @@ class FakeGitHub:
         self.requests = []
         self.token_calls = 0
         self.created = []
+        self.reads_down = False      # simulate GitHub outages for reads
+        self.use_etags = False       # answer If-None-Match with 304 like GitHub
+
+    def respond(self, request, data, headers=None):
+        headers = dict(headers or {})
+        if self.use_etags:
+            etag = '"%s"' % hash(json.dumps(data, sort_keys=True))
+            headers['etag'] = etag
+            if request.headers.get('if-none-match') == etag:
+                return httpx.Response(304, headers=headers)
+        return httpx.Response(200, json=data, headers=headers)
 
     def __call__(self, request: httpx.Request):
         self.requests.append(request)
@@ -227,6 +238,8 @@ class FakeGitHub:
             assert claims['iss'] == CONFIG.app_id
             return httpx.Response(201, json={'token': 'ghs_test', 'expires_at': '2099-01-01T00:00:00Z'})
         assert request.headers['authorization'] == 'token ghs_test', 'reads must use the installation token'
+        if self.reads_down and request.method == 'GET':
+            return httpx.Response(503)
         if path == f'/repos/{REPO}/issues' and request.method == 'POST':
             payload = json.loads(request.content)
             self.created.append(payload)
@@ -242,10 +255,10 @@ class FakeGitHub:
                 headers = {}
                 if page * self.page_size < len(self.issues):
                     headers['link'] = f'<https://api.github.com/repos/{REPO}/issues?page={page + 1}>; rel="next"'
-                return httpx.Response(200, json=chunk, headers=headers)
-            return httpx.Response(200, json=self.issues)
+                return self.respond(request, chunk, headers)
+            return self.respond(request, self.issues)
         if path == f'/repos/{REPO}/milestones':
-            return httpx.Response(200, json=self.milestones)
+            return self.respond(request, self.milestones)
         if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/events'):
             number = int(path.split('/')[-2])
             return httpx.Response(200, json=self.events.get(number, []))
@@ -369,6 +382,81 @@ class Reporting(unittest.TestCase):
         self.assertEqual(len(adapter.tickets()), before + 1)
 
 
+class Caching(unittest.TestCase):
+    """Review note 2: rate limits, conditional requests and outages."""
+
+    def setUp(self):
+        self.now = [1_000.0]
+        self.fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        self.adapter = gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(self.fake), clock=lambda: self.now[0],
+                                       cache_seconds=60, backoff_seconds=60)
+        self.fake_time = mock.patch.object(gh.GitHubIssues, '_app_jwt', return_value=jwt.encode(
+            {'iat': int(time.time()) - 60, 'exp': int(time.time()) + 540, 'iss': CONFIG.app_id}, PEM, algorithm='RS256'))
+        self.fake_time.start()
+        self.addCleanup(self.fake_time.stop)
+
+    def event_reads(self):
+        return [r.url.path for r in self.fake.requests if r.url.path.endswith('/events')]
+
+    def test_events_are_refetched_only_for_issues_whose_updated_at_changed(self):
+        self.adapter.tickets()
+        self.assertEqual(len(self.event_reads()), 3)
+        self.now[0] += 120
+        self.adapter.tickets()
+        self.assertEqual(len(self.event_reads()), 3, 'unchanged issues must reuse their cached events')
+        self.fake.issues[1]['updated_at'] = '2026-11-14T08:00:00Z'  # issue #2 labelled/closed/reopened
+        self.now[0] += 120
+        self.adapter.tickets()
+        self.assertEqual(self.event_reads()[3:], [f'/repos/{REPO}/issues/2/events'])
+
+    def test_unchanged_lists_are_conditional_requests(self):
+        self.fake.use_etags = True
+        first = self.adapter.tickets()
+        self.now[0] += 120
+        before = len(self.fake.requests)
+        second = self.adapter.tickets()
+        later = self.fake.requests[before:]
+        self.assertTrue(later and all(r.headers.get('if-none-match') for r in later))
+        self.assertEqual(second, first)
+
+    def test_outage_serves_last_good_data_marked_stale_with_back_off(self):
+        good = self.adapter.tickets()
+        self.assertFalse(self.adapter.freshness()['stale'])
+        self.fake.reads_down = True
+        self.now[0] += 120
+        self.assertEqual(self.adapter.tickets(), good)
+        self.assertTrue(self.adapter.freshness()['stale'])
+        calls = len(self.fake.requests)
+        self.adapter.tickets()
+        self.adapter.freshness()
+        self.assertEqual(len(self.fake.requests), calls, 'no retries during the back-off')
+        self.now[0] += 61
+        self.adapter.tickets()
+        self.assertGreater(len(self.fake.requests), calls, 'retries after the back-off')
+        self.fake.reads_down = False
+        self.now[0] += 61
+        self.adapter.tickets()
+        self.assertFalse(self.adapter.freshness()['stale'])
+
+    def test_first_load_failure_raises_without_hammering_github(self):
+        self.fake.reads_down = True
+        with self.assertRaises(gh.GitHubUnavailable):
+            self.adapter.tickets()
+        calls = len(self.fake.requests)
+        with self.assertRaises(gh.GitHubUnavailable):
+            self.adapter.tickets()
+        self.assertEqual(len(self.fake.requests), calls)
+
+    def test_created_issue_is_returned_even_if_the_refresh_then_fails(self):
+        self.adapter.tickets()
+        self.fake.reads_down = True
+        ticket = self.adapter.create_issue(title='Created during an outage', description='', severity='low',
+                                           category='Other', testing_round='R05', area='', environment='',
+                                           deploy_version='', reporter='Anna')
+        self.assertEqual(ticket['reporter'], 'Anna')
+        self.assertEqual(len(self.fake.created), 1)
+
+
 class StubAdapter(gh.GitHubIssues):  # counts as the GitHub source; no HTTP client
     def __init__(self, tickets):
         self._tickets = tickets
@@ -385,6 +473,9 @@ class StubAdapter(gh.GitHubIssues):  # counts as the GitHub source; no HTTP clie
 
     def open_rounds(self):
         return ['R05']
+
+    def freshness(self):
+        return {'stale': True, 'as_of': '2026-11-11T10:00:00+00:00'}
 
     def create_issue(self, **values):
         if values['testing_round'] != 'R05':
@@ -421,6 +512,7 @@ class AppWiring(unittest.TestCase):
                 headers = {'X-QA-Request': '1'}
                 body = {'title': 'New bug', 'reporter': 'X', 'testing_round': 'R05'}
                 self.assertEqual(a['current_round'], 'R05')
+                self.assertEqual((a['data_stale'], a['data_as_of']), (True, '2026-11-11T10:00:00+00:00'))
                 created = client.post('/api/tickets', headers=headers, json=body)
                 self.assertEqual(created.status_code, 201, created.text)
                 self.assertEqual(created.json()['ticket']['id'], 101)

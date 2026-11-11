@@ -52,7 +52,9 @@ async function initial(){
 async function refresh(){
   try {
     const [a,t]=await Promise.all([api('/api/analytics'),api('/api/tickets')]);
-    analytics=a;tickets=t.tickets;loaded=true;$('load-error').classList.add('hidden');renderAll();
+    analytics=a;tickets=t.tickets;loaded=true;renderAll();
+    if(a.data_stale){$('load-error-text').textContent=`GitHub can't be reached right now. Showing data from ${new Date(a.data_as_of).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}.`;$('load-error').classList.remove('hidden');}
+    else $('load-error').classList.add('hidden');
   } catch(e){
     if(e.status===401){toggleSession(false);return;}
     console.error(e);
