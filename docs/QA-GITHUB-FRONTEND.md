@@ -130,10 +130,10 @@ rule.
      older than 12 months is deleted regardless. Verify sets each object's
      `customTime`; a lifecycle rule deletes 30 days after it, and a second
      rule deletes objects older than 365 days.
-   - **Reopen (open question for the owner):** Cloud Storage does not allow
+   - **Reopen (owner accepted 2026-11-11):** Cloud Storage does not allow
      `customTime` to be removed or moved earlier once set; the documented way
      to reset it is to rewrite the object. A rewrite also restarts the
-     object's age, so the 365-day rule would count from the rewrite. Proposed:
+     object's age, so the 365-day rule would count from the rewrite. So:
      Reopen rewrites the issue's objects without `customTime`, and QA itself
      deletes any object whose `uploaded_at` metadata is older than 365 days
      whenever it lists an issue's images, so the 12-month limit still holds.
