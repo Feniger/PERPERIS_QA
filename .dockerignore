@@ -7,6 +7,7 @@
 !entrypoint.py
 !runtime_guard.py
 !github_issues.py
+!screenshots.py
 !static/
 static/**
 !static/index.html
