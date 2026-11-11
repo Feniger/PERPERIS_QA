@@ -17,12 +17,17 @@ concurrency:
 
 jobs:
   unit:
-    name: Unit and PostgreSQL tests
+    name: Unit and PostgreSQL ${{ matrix.postgres }} tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 16: the version the Cloud Foundation work was tested on. 18: what Neon staging runs.
+        postgres: ['16', '18']
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_USER: qa_test
           POSTGRES_PASSWORD: qa_test_only
@@ -42,7 +47,7 @@ jobs:
           pip install --require-hashes -r requirements.lock
           pip install 'httpx>=0.27,<1'
           pip check
-      - name: Run tests (SQLite and disposable PostgreSQL 16)
+      - name: Run tests (SQLite and disposable PostgreSQL ${{ matrix.postgres }})
         env:
           PERPERIS_QA_TEST_POSTGRES_URL: postgresql://qa_test:qa_test_only@localhost:5432/qa_test
         run: python -m unittest discover -s tests -v
