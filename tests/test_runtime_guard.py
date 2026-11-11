@@ -10,6 +10,7 @@ STAGING = {
     'PERPERIS_QA_AUTH_MODE': 'identity',
     'PERPERIS_QA_TICKET_SOURCE': 'github',
     'PERPERIS_QA_MEMBERS': MEMBERS,
+    'PERPERIS_QA_SCREENSHOT_BUCKET': 'synthetic-private-bucket',
 }
 
 
@@ -56,6 +57,16 @@ class RuntimeGuardTests(unittest.TestCase):
                 env['PERPERIS_QA_TICKET_SOURCE'] = source
             with self.subTest(source=source):
                 self.assertIn('GitHub issues', self.blocked(env))
+
+    def test_staging_requires_the_private_screenshot_bucket(self):
+        for value in (None, '', '  '):
+            env = dict(STAGING)
+            env.pop('PERPERIS_QA_SCREENSHOT_BUCKET')
+            if value is not None:
+                env['PERPERIS_QA_SCREENSHOT_BUCKET'] = value
+            with self.subTest(value=value):
+                self.assertIn('screenshot bucket', self.blocked(env))
+        self.assertIn('never in memory', self.blocked({**STAGING, 'PERPERIS_QA_SCREENSHOTS': 'memory'}))
 
     def test_staging_requires_a_member_list_and_never_echoes_it(self):
         for members in (None, '', '   '):

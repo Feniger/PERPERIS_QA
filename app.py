@@ -11,12 +11,14 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator
 import identity
 import runtime_guard
 import github_issues
+import screenshots
 
 ROOT = Path(__file__).resolve().parent
 ADMIN_PASSWORD = os.getenv('PERPERIS_QA_PASSWORD', '')
@@ -34,12 +36,17 @@ async def lifespan(app: FastAPI):
     try:
         identity.check_configuration()
         APP.state.tickets = github_issues.from_env(os.environ)
+        store = screenshots.from_env(os.environ)
+        if store is not None:
+            store.check_private()   # staging refuses to start unless the bucket is private
+        APP.state.screenshots = screenshots.Screenshots(store) if store is not None else None
         yield
     finally:
         source = getattr(APP.state, 'tickets', None)
         if source is not None:
             source.close()
         APP.state.tickets = None
+        APP.state.screenshots = None
 
 
 APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -270,7 +277,10 @@ def auth_config():
     check_runtime()
     identity.check_configuration()
     source = getattr(APP.state, 'tickets', None)
+    # attachments_enabled stays False until the screenshot UI (PR 3) replaces static/attachments.js.
     result = {'mode': identity.mode(), 'attachments_enabled': False,
+              'screenshots_enabled': getattr(APP.state, 'screenshots', None) is not None,
+              'screenshot_limit': screenshots.MAX_PER_ISSUE,
               'tickets_source': 'github' if isinstance(source, github_issues.GitHubIssues) else 'memory',
               'tickets_repo': source.config.repo if source is not None else ''}
     if identity.mode() == 'identity':
@@ -300,21 +310,104 @@ def ticket_history(ticket_id: int, user=Depends(current_user)):
     return {'events': events, 'changes': []}
 
 
+def screenshot_service():
+    service = getattr(APP.state, 'screenshots', None)
+    if service is None:
+        raise HTTPException(404, 'Screenshots are not enabled')
+    return service
+
+
+def require_ticket(ticket_id: int):
+    """Screenshots attach only to QA tickets (issues labeled qa) that QA can see."""
+    if not any(t['id'] == ticket_id for t in from_github(tickets_source().tickets)):
+        raise HTTPException(404, 'Ticket not found')
+
+
+def screenshot_errors(action):
+    try:
+        return action()
+    except screenshots.TooLarge as error:
+        raise HTTPException(413, str(error)) from None
+    except screenshots.InvalidImage as error:
+        raise HTTPException(422, str(error)) from None
+    except screenshots.LimitReached as error:
+        raise HTTPException(409, str(error)) from None
+    except screenshots.NotFound:
+        raise HTTPException(404, 'Screenshot not found') from None
+    except PermissionError as error:
+        raise HTTPException(403, str(error)) from None
+    except FileExistsError:
+        raise HTTPException(503, 'Screenshot upload failed; retry') from None
+    except HTTPException:
+        raise
+    except Exception:
+        # Storage errors can contain bucket or object details; never reflect them.
+        raise HTTPException(503, 'Screenshot storage is temporarily unavailable; retry') from None
+
+
+@APP.get('/api/tickets/{ticket_id}/screenshots')
+def list_screenshots(ticket_id: int, user: identity.Principal = Depends(current_user)):
+    service = screenshot_service()
+    require_ticket(ticket_id)
+    items = screenshot_errors(lambda: service.list(ticket_id, subject=user.subject, is_admin=user.role == 'Admin'))
+    return {'screenshots': items, 'limit': screenshots.MAX_PER_ISSUE}
+
+
+@APP.post('/api/tickets/{ticket_id}/screenshots', status_code=201)
+async def upload_screenshot(ticket_id: int, request: Request, user: identity.Principal = Depends(guard_mutation)):
+    """Body: the raw image bytes. Any member may add screenshots to a QA ticket."""
+    service = screenshot_service()
+    declared = request.headers.get('content-length', '')
+    if declared.isdigit() and int(declared) > screenshots.MAX_BYTES:
+        raise HTTPException(413, 'A screenshot must be at most 10 MB')
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > screenshots.MAX_BYTES:
+            raise HTTPException(413, 'A screenshot must be at most 10 MB')
+    try:
+        screenshots.throttle(user.subject or 'local')
+    except screenshots.LimitReached as error:
+        raise HTTPException(429, str(error), headers={'Retry-After': str(screenshots.UPLOAD_WINDOW)}) from None
+    await run_in_threadpool(require_ticket, ticket_id)
+    item = await run_in_threadpool(screenshot_errors, lambda: service.upload(
+        ticket_id, bytes(body), subject=user.subject, name=user.name, is_admin=user.role == 'Admin'))
+    identity.security_event(user.subject, str(ticket_id), 'screenshot_uploaded')
+    return {'screenshot': item}
+
+
+@APP.get('/api/tickets/{ticket_id}/screenshots/{name}')
+def view_screenshot(ticket_id: int, name: str, thumb: bool = False, user: identity.Principal = Depends(current_user)):
+    service = screenshot_service()
+    data, content_type = screenshot_errors(lambda: service.read(ticket_id, name, thumb=thumb))
+    return Response(content=data, media_type=content_type, headers={
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline', 'Content-Security-Policy': "default-src 'none'; sandbox"})
+
+
+@APP.delete('/api/tickets/{ticket_id}/screenshots/{name}', status_code=204)
+def delete_screenshot(ticket_id: int, name: str, user: identity.Principal = Depends(guard_mutation)):
+    service = screenshot_service()
+    screenshot_errors(lambda: service.delete(ticket_id, name, subject=user.subject, is_admin=user.role == 'Admin'))
+    identity.security_event(user.subject, str(ticket_id), 'screenshot_deleted')
+    return Response(status_code=204)
+
+
 @APP.middleware('http')
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Content-Security-Policy'] = (
+    response.headers.setdefault('Content-Security-Policy', (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' blob:; font-src 'self'; connect-src 'self' https://identitytoolkit.googleapis.com; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-    )
+    ))
     if identity.mode() == 'identity':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     if request.url.path.startswith('/api/'):
-        response.headers['Cache-Control'] = 'no-store'
+        response.headers.setdefault('Cache-Control', 'no-store')
     return response
 
 
