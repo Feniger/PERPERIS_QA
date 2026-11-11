@@ -1,5 +1,15 @@
 # PERPERIS QA — remaining private staging and release plan
 
+> **Historical — superseded on 2026-11-11.** QA-CLOUD-01 to 05 were merged on
+> 2026-11-10 (PRs #1–#5) and QA-CLOUD-06 (#7) was merged as code but never set
+> up. On 2026-11-11 the owner and creator decided that PERPERIS QA becomes a
+> front end on GitHub issues in `krummb/kattens-pt`, with no ticket database
+> and no QA database at all (roles as Identity Platform claims, stateless
+> sessions). The current plan is [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md).
+> The text below describes the earlier self-hosted ticket design; its
+> staging-evidence and secrets guidance may still inform milestone 4 there, but
+> its Cloud SQL, importer and data-cutover sections no longer apply.
+
 Code Stories QA-CLOUD-01 through 05 are reviewable stacked PRs, not merged or
 deployed. Only the QA repository is in scope. No paid infrastructure exists from
 this work and no cloud account access was attempted. Broad authorization to keep
