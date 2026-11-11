@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from database import Database
 import identity
 import attachments
+import runtime_guard
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parent
@@ -25,16 +26,14 @@ SECRET = os.getenv('PERPERIS_QA_SECRET', '')
 DATABASE = Database(os.getenv('PERPERIS_QA_DATABASE_URL', ''), sqlite_path=DB_PATH)
 
 def check_runtime():
-    """The shared-password/SQLite prototype is only supported locally.
+    """Local runs off Cloud Run, or validated private staging only.
 
-    Cloud Run sets K_SERVICE. No configuration switch enables cloud mode until
-    persistent storage and verified user authentication have been implemented.
+    Cloud Run sets K_SERVICE. Staging must use verified identity sign-in, a TLS
+    PostgreSQL database and private (or disabled) screenshots; the shared-password
+    and SQLite prototype stays local. Production remains blocked. See
+    runtime_guard.py and docs/QA-CLOUD-06-STAGING.md.
     """
-    if 'K_SERVICE' in os.environ or os.getenv('PERPERIS_QA_ENV', 'local') != 'local':
-        raise RuntimeError(
-            'PERPERIS QA cloud startup is blocked: verified user authentication '
-            'and persistent cloud storage are not implemented. Run locally only.'
-        )
+    runtime_guard.check(os.environ)
 
 
 @asynccontextmanager

@@ -9,6 +9,7 @@
 !migrate_sqlite.py
 !entrypoint.py
 !maintenance.py
+!runtime_guard.py
 !migrations/
 migrations/**
 !migrations/sqlite/
