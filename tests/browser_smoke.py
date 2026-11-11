@@ -67,12 +67,17 @@ def main():
                         expect(page.locator('#ticket-rows tr')).to_have_count(1)
                         expect(page.locator('#ticket-rows .row-id')).to_have_text('#1')
                         expect(page.locator('#k-total')).to_have_text('1')
-                        # Detail is read-only until status changes return (milestone 3).
+                        # Ticket detail is visible and status changes are written back (milestone 3).
                         page.locator('#ticket-rows tr').click()
+                        expect(page.locator('#ticket-detail')).to_be_visible()
                         expect(page.locator('#ticket-detail')).to_contain_text('Reported by Product Owner')
-                        expect(page.locator('#update-fields')).to_be_hidden()
-                        expect(page.locator('#form-submit')).to_be_hidden()
-                        page.locator('#modal-close').click()
+                        expect(page.locator('#edit-status')).to_have_value('')
+                        page.locator('#edit-status').select_option('fixed')
+                        page.locator('[name=comment]').fill('Fixed in the synthetic build')
+                        page.locator('#form-submit').click()
+                        page.locator('#modal').wait_for(state='hidden')
+                        expect(page.locator('#k-fixed')).to_have_text('1')
+                        expect(page.locator('#ticket-rows .chip')).to_have_text('Fixed')
                         # Quick report on Today, defaulting to the open round.
                         page.goto(origin + '#today')
                         expect(page.locator('#quick-note')).to_contain_text('Local test data')
@@ -106,8 +111,8 @@ def main():
                         assert page.evaluate('Object.keys(localStorage).length') == 0
                         assert page.locator('#password').input_value() == ''
                         assert not errors, errors
-                        print('Browser smoke passed: reports via dialog and quick form as issues (#N), read-only detail, '
-                              'no members screen, managed signup instructions and member-list denial.')
+                        print('Browser smoke passed: reports via dialog and quick form as issues (#N), visible detail and a '
+                              'status change, no members screen, managed signup instructions and member-list denial.')
                     finally:
                         browser.close()
             finally:

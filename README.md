@@ -27,8 +27,9 @@ secrets.
 - Sign-in: Identity Platform (verified email) plus the member list
   `PERPERIS_QA_MEMBERS` (Admin / Developer / Tester), or a shared operator
   password for local use only
-- Not yet: status changes from QA (Triage/Verify/Reopen, milestone 3) and
-  screenshots (later, bucket-only)
+- Status changes by role (Triage / Fix / Deploy / Verify / Close / Reopen),
+  written to the issue with a "<change> by <name> via PERPERIS QA" comment
+- Not yet: screenshots (later, bucket-only)
 - CI on every pull request: unit tests, browser smoke tests, container checks
 
 ## Run locally

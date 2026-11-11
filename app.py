@@ -48,7 +48,11 @@ VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','au
 CATEGORY_NAMES = {'ui_ux': 'UI / UX', 'workout': 'Workout', 'coach_ai': 'Coach / AI', 'data': 'Data',
                   'performance': 'Performance', 'mobile': 'Mobile', 'auth': 'Sign-in', 'deployment': 'Deployment',
                   'other': 'Other'}
-STATUS_LATER = 'Status changes from QA arrive in the next milestone; use GitHub for now.'
+STATUS_CHANGES = {'triaged', 'in_progress', 'fixed', 'deployed', 'verified', 'closed', 'reopened'}
+# Which status changes each role may make (Admin: all). Mirrored in static/app.js.
+ROLE_STATUSES = {'Developer': {'triaged', 'in_progress', 'fixed', 'deployed'},
+                 'Tester': {'verified', 'closed', 'reopened'}}
+WEBHOOK_EVENTS = {'issues', 'issue_comment', 'pull_request', 'label', 'milestone'}
 
 
 def check_setup():
@@ -113,6 +117,12 @@ class TicketCreate(BaseModel):
     def strip_required_text(cls, value):
         return value.strip() if isinstance(value, str) else value
 
+class TicketUpdate(BaseModel):
+    status: str
+    comment: str = Field(default='', max_length=10000)
+    # GitHub's updated_at when the person opened the ticket: a newer change elsewhere gives 409.
+    expected_updated_at: str | None = Field(default=None, max_length=40)
+
 
 @APP.get('/', response_class=HTMLResponse)
 def index():
@@ -175,8 +185,42 @@ def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mut
     return JSONResponse(status_code=201, content={'ticket': ticket})
 
 @APP.patch('/api/tickets/{ticket_id}')
-def update_ticket(ticket_id:int,user:identity.Principal=Depends(guard_mutation)):
-    raise HTTPException(405, STATUS_LATER)
+def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Depends(guard_mutation)):
+    """Triage / Verify / Reopen (milestone 3): one issue update plus a "<change> by <name>" comment."""
+    validate_enum(payload.status, STATUS_CHANGES, 'status')
+    if user.role != 'Admin' and payload.status not in ROLE_STATUSES.get(user.role, set()):
+        raise HTTPException(403, 'Your role does not permit this status change')
+    try:
+        ticket = tickets_source().change_status(ticket_id, payload.status, actor=user.name, comment=payload.comment,
+                                                expected_updated_at=payload.expected_updated_at)
+    except github_issues.TicketNotFound:
+        raise HTTPException(404, 'Ticket not found') from None
+    except github_issues.TicketConflict:
+        raise HTTPException(409, 'Ticket changed; refresh before saving') from None
+    except github_issues.GitHubUnavailable:
+        raise HTTPException(502, 'GitHub could not be reached. The status was not changed; try again.') from None
+    return {'ticket': ticket}
+
+
+@APP.post('/api/github/webhook', status_code=204)
+async def github_webhook(request: Request):
+    """GitHub App webhook: refresh QA's view when issues, comments or PRs change.
+
+    Verified with PERPERIS_QA_GITHUB_WEBHOOK_SECRET (HMAC-SHA256, X-Hub-Signature-256);
+    off (404) when no secret is configured. It only clears the cache; QA then reads
+    GitHub itself, so a webhook can never inject data.
+    """
+    secret = os.getenv('PERPERIS_QA_GITHUB_WEBHOOK_SECRET', '')
+    if len(secret) < 20:
+        raise HTTPException(404)
+    body = await request.body()
+    expected = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(request.headers.get('x-hub-signature-256', '').encode(), expected.encode()):
+        raise HTTPException(401, 'Invalid signature')
+    source = getattr(APP.state, 'tickets', None)
+    if request.headers.get('x-github-event', '') in WEBHOOK_EVENTS and source is not None:
+        source.invalidate()
+    return Response(status_code=204)
 
 @APP.get('/api/analytics')
 def analytics(user:identity.Principal=Depends(current_user)):

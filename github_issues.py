@@ -51,6 +51,50 @@ class InvalidReport(ValueError):
     """A report that cannot become an issue as given (message is safe to show)."""
 
 
+class TicketNotFound(LookupError):
+    """No QA issue with that number (or not labelled `qa`)."""
+
+
+class TicketConflict(RuntimeError):
+    """The issue changed since the person opened it."""
+
+
+# QA status -> label, and the words used in the GitHub comment QA posts for each change.
+STATUS_LABEL = {'triaged': 'status:triaged', 'in_progress': 'status:in-progress', 'fixed': 'status:fixed',
+                'deployed': 'status:deployed', 'verified': 'status:verified'}
+STATUS_WORDS = {'triaged': 'Triaged', 'in_progress': 'In progress', 'fixed': 'Marked fixed',
+                'deployed': 'Marked deployed', 'verified': 'Verified', 'closed': 'Closed as not planned',
+                'reopened': 'Reopened'}
+
+
+def status_patch(issue: dict, status: str) -> dict:
+    """The single issue update for a QA status change (milestone 3).
+
+    The issue keeps at most one status label: the new one replaces the old ones,
+    and Reopen removes them all (status:fixed/deployed/verified from the previous
+    cycle). current_status() does not rely on this, since issues can also be
+    changed directly on GitHub.
+    """
+    keep = [label['name'] for label in issue.get('labels', []) if not label['name'].startswith('status:')]
+    if status == 'reopened':
+        return {'state': 'open', 'labels': keep}
+    if status == 'closed':
+        return {'state': 'closed', 'state_reason': 'not_planned', 'labels': keep}
+    if status not in STATUS_LABEL:
+        raise InvalidReport('Unknown status')
+    labels = keep + [STATUS_LABEL[status]]
+    if status == 'verified':
+        return {'state': 'closed', 'state_reason': 'completed', 'labels': labels}
+    if status in ('triaged', 'in_progress'):
+        return {'state': 'open', 'labels': labels}
+    return {'labels': labels}  # fixed / deployed: the state is left to the PR and the deploy
+
+
+def status_comment(status: str, actor: str, comment: str) -> str:
+    head = f'**{STATUS_WORDS[status]}** by {neutralize(" ".join(actor.split()))} via PERPERIS QA'
+    return head + ('\n\n' + neutralize(comment.strip()) if comment.strip() else '')
+
+
 @dataclass(frozen=True)
 class Config:
     app_id: str
@@ -187,7 +231,7 @@ def current_status(issue: dict, labels: set[str], last_label: dict[str, float], 
     last_reopen = reopens[-1] if reopens else None
     present = [name for name, _ in STATUS_LABELS if name in labels]
     # Newest application wins; labels without a recorded event fall back to the most advanced.
-    current_cycle = [name for name in present if last_reopen is None or last_label.get(name, 0) > last_reopen]
+    current_cycle = [name for name in present if last_reopen is None or last_label.get(name, 0) >= last_reopen]
     newest = max(current_cycle, key=lambda name: (last_label.get(name, 0), -rank[name]), default=None)
     value = dict(STATUS_LABELS).get(newest) if newest else None
     if issue.get('state') == 'closed':
@@ -481,6 +525,45 @@ class GitHubIssues:
         # Built from the created issue itself: a failing refresh must not report a created issue as failed.
         return to_ticket(created, [], rounds)
 
+    def change_status(self, number: int, status: str, *, actor: str, comment: str = '',
+                      expected_updated_at: str | None = None) -> dict:
+        """Apply a QA status change to the issue and record who did it as a comment."""
+        repo = self.config.repo
+        headers = {'Authorization': f'token {self._installation_token()}'}
+        try:
+            current = self._client.get(f'/repos/{repo}/issues/{number}', headers=headers)
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if current.status_code in (404, 410):
+            raise TicketNotFound(number)
+        if current.status_code != 200:
+            raise GitHubUnavailable(f'GitHub read failed ({current.status_code})')
+        issue = current.json()
+        if 'pull_request' in issue or 'qa' not in {label['name'] for label in issue.get('labels', [])}:
+            raise TicketNotFound(number)
+        if expected_updated_at and issue.get('updated_at') != expected_updated_at:
+            raise TicketConflict(number)
+        try:
+            response = self._client.patch(f'/repos/{repo}/issues/{number}', json=status_patch(issue, status), headers=headers)
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if response.status_code != 200:
+            raise GitHubUnavailable(f'GitHub update failed ({response.status_code})')
+        updated = response.json()
+        try:  # the change itself has been made; a missing comment must not report it as failed
+            self._client.post(f'/repos/{repo}/issues/{number}/comments',
+                              json={'body': status_comment(status, actor, comment)}, headers=headers)
+        except httpx.HTTPError:
+            pass
+        with self._lock:
+            rounds = self._snapshot[1]['rounds'] if self._snapshot else []
+        self.invalidate()
+        try:
+            events = self._get_all(f'/repos/{repo}/issues/{number}/events', {'per_page': 100})
+        except GitHubUnavailable:
+            events = []
+        return to_ticket(updated, events, rounds)
+
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']
 
@@ -507,7 +590,15 @@ class MemoryIssues:
         self._milestones = [{'number': n, 'state': 'open', 'title': title, 'created_at': opened}
                             for n, title in enumerate(rounds, start=1)]
         self._issues: dict[int, dict] = {}
+        self._events: dict[int, list[dict]] = {}
+        self.comments: dict[int, list[str]] = {}
         self._lock = threading.Lock()
+        self._tick = 0
+
+    def _now(self) -> str:
+        # Strictly increasing whole seconds, like distinct GitHub event times.
+        self._tick = max(self._tick + 1, int(self.clock()))
+        return iso(self._tick)
 
     def close(self):
         pass
@@ -528,22 +619,49 @@ class MemoryIssues:
         payload = report_payload(milestone=milestone['number'], **fields)
         with self._lock:
             number = len(self._issues) + 1
-            now = iso(self.clock())
+            now = self._now()
             issue = {'number': number, 'title': payload['title'], 'state': 'open', 'state_reason': None,
                      'labels': [{'name': name} for name in payload['labels']], 'milestone': {'title': milestone['title']},
                      'body': payload['body'], 'created_at': now, 'updated_at': now,
                      'user': {'login': 'perperis-qa[bot]'}, 'assignees': [], 'html_url': ''}
             self._issues[number] = issue
+            self._events[number] = []
         return to_ticket(issue, [], testing_rounds(self._milestones))
+
+    def change_status(self, number: int, status: str, *, actor: str, comment: str = '',
+                      expected_updated_at: str | None = None) -> dict:
+        with self._lock:
+            issue = self._issues.get(number)
+            if issue is None:
+                raise TicketNotFound(number)
+            if expected_updated_at and issue['updated_at'] != expected_updated_at:
+                raise TicketConflict(number)
+            patch = status_patch(issue, status)
+            now = self._now()
+            before = {label['name'] for label in issue['labels']}
+            events = self._events[number]
+            if patch.get('state') == 'open' and issue['state'] == 'closed':
+                events.append({'event': 'reopened', 'created_at': now})
+            if patch.get('state') == 'closed' and issue['state'] == 'open':
+                events.append({'event': 'closed', 'created_at': now, 'state_reason': patch['state_reason']})
+            for name in patch['labels']:
+                if name not in before:
+                    events.append({'event': 'labeled', 'created_at': now, 'label': {'name': name}})
+            issue['labels'] = [{'name': name} for name in patch['labels']]
+            issue['state'] = patch.get('state', issue['state'])
+            issue['state_reason'] = patch.get('state_reason', 'reopened' if issue['state'] == 'open' else issue['state_reason'])
+            issue['updated_at'] = now
+            self.comments.setdefault(number, []).append(status_comment(status, actor, comment))
+            return to_ticket(issue, list(events), testing_rounds(self._milestones))
 
     def tickets(self) -> list[dict]:
         with self._lock:
             issues = sorted(self._issues.values(), key=lambda i: i['number'], reverse=True)
-        return [to_ticket(i, [], testing_rounds(self._milestones)) for i in issues]
+        return [to_ticket(i, list(self._events.get(i['number'], [])), testing_rounds(self._milestones)) for i in issues]
 
     def history(self, number: int) -> list[dict] | None:
         issue = self._issues.get(number)
-        return history(issue, []) if issue else None
+        return history(issue, list(self._events.get(number, []))) if issue else None
 
 
 def from_env(env=os.environ) -> GitHubIssues | MemoryIssues:
