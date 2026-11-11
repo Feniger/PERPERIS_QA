@@ -184,6 +184,9 @@ def analytics(user:identity.Principal=Depends(current_user)):
     result = compute_analytics(from_github(source.tickets))
     rounds = from_github(source.open_rounds)
     result['current_round'] = rounds[-1] if rounds else None
+    freshness = from_github(source.freshness)
+    # When GitHub is unreachable, the last good data is shown marked stale (see GitHubIssues.snapshot).
+    result['data_stale'], result['data_as_of'] = freshness['stale'], freshness['as_of']
     return result
 
 

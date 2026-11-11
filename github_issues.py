@@ -297,16 +297,27 @@ def report_payload(*, milestone: int, title: str, description: str, severity: st
 
 class GitHubIssues:
     def __init__(self, config: Config, *, transport: httpx.BaseTransport | None = None,
-                 clock=time.time, cache_seconds: float = 60):
+                 clock=time.time, cache_seconds: float = 60, backoff_seconds: float = 60):
         self.config = config
         self.clock = clock
         self.cache_seconds = cache_seconds
+        self.backoff_seconds = backoff_seconds
         self._client = httpx.Client(base_url=API, transport=transport, timeout=15, headers={
             'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
             'User-Agent': 'perperis-qa'})
+        # _lock guards the snapshot state only; GitHub is never called while holding it.
         self._lock = threading.Lock()
+        self._loaded = threading.Condition(self._lock)
+        self._token_lock = threading.Lock()
         self._token: tuple[str, float] | None = None
-        self._snapshot: tuple[float, dict] | None = None
+        self._snapshot: tuple[float, dict] | None = None   # (taken at, data); kept after expiry as fallback
+        self._refreshing = False
+        self._retry_at = 0.0                                # back-off after a failed refresh
+        # Rate-limit savers: an issue's events are refetched only when its updated_at changes
+        # (labels, closing, reopening and comments all bump it), and list reads are conditional
+        # (a 304 "Not Modified" does not count against the App's hourly limit).
+        self._events_cache: dict[int, tuple[str, list[dict]]] = {}
+        self._etags: dict[str, tuple[str, list[dict], str | None]] = {}
 
     def close(self):
         self._client.close()
@@ -317,6 +328,10 @@ class GitHubIssues:
                           self.config.private_key, algorithm='RS256')
 
     def _installation_token(self) -> str:
+        with self._token_lock:
+            return self._fresh_token()
+
+    def _fresh_token(self) -> str:
         if self._token and self._token[1] - 60 > self.clock():
             return self._token[0]
         try:
@@ -330,48 +345,107 @@ class GitHubIssues:
         self._token = (data['token'], parse_time(data.get('expires_at')) or self.clock() + 3000)
         return self._token[0]
 
-    def _get_all(self, path: str, params: dict) -> list[dict]:
+    def _get_all(self, path: str, params: dict, *, conditional: bool = False) -> list[dict]:
         headers = {'Authorization': f'token {self._installation_token()}'}
         items: list[dict] = []
         url, query = path, params
         for _ in range(MAX_PAGES):
+            key = str(self._client.build_request('GET', url, params=query).url)
+            cached = self._etags.get(key) if conditional else None
+            request_headers = dict(headers, **({'If-None-Match': cached[0]} if cached else {}))
             try:
-                response = self._client.get(url, params=query, headers=headers)
+                response = self._client.get(url, params=query, headers=request_headers)
             except httpx.HTTPError:
                 raise GitHubUnavailable('GitHub could not be reached') from None
-            if response.status_code != 200:
+            if response.status_code == 304 and cached:
+                page, nxt = cached[1], cached[2]
+            elif response.status_code == 200:
+                page = response.json()
+                nxt = response.links.get('next', {}).get('url')
+                if conditional and response.headers.get('etag'):
+                    self._etags[key] = (response.headers['etag'], page, nxt)
+            else:
                 raise GitHubUnavailable(f'GitHub read failed ({response.status_code})')
-            items.extend(response.json())
-            nxt = response.links.get('next', {}).get('url')
+            items.extend(page)
             if not nxt:
                 return items
             url, query = nxt, None
         raise GitHubUnavailable('Too many pages from GitHub')
 
+    def _events(self, issue: dict) -> list[dict]:
+        number, updated = issue['number'], issue.get('updated_at') or ''
+        cached = self._events_cache.get(number)
+        if cached and cached[0] == updated:
+            return cached[1]
+        events = self._get_all(f'/repos/{self.config.repo}/issues/{number}/events', {'per_page': 100})
+        self._events_cache[number] = (updated, events)
+        return events
+
     def _load(self) -> dict:
         repo = self.config.repo
         issues = [i for i in self._get_all(f'/repos/{repo}/issues', {
-            'labels': 'qa', 'state': 'all', 'per_page': 100, 'sort': 'created', 'direction': 'desc'})
-            if 'pull_request' not in i]
-        milestones = self._get_all(f'/repos/{repo}/milestones', {'state': 'all', 'per_page': 100})
+            'labels': 'qa', 'state': 'all', 'per_page': 100, 'sort': 'created', 'direction': 'desc'},
+            conditional=True) if 'pull_request' not in i]
+        milestones = self._get_all(f'/repos/{repo}/milestones', {'state': 'all', 'per_page': 100}, conditional=True)
         rounds = testing_rounds(milestones)
-        events = {i['number']: self._get_all(f'/repos/{repo}/issues/{i["number"]}/events', {'per_page': 100})
-                  for i in issues}
+        events = {i['number']: self._events(i) for i in issues}
+        for number in set(self._events_cache) - set(events):
+            del self._events_cache[number]
         return {'issues': {i['number']: i for i in issues}, 'events': events, 'milestones': milestones,
-                'rounds': rounds,
+                'rounds': rounds, 'as_of': self.clock(), 'stale': False,
                 'tickets': [to_ticket(i, events[i['number']], rounds) for i in issues]}
 
     def snapshot(self) -> dict:
+        """Current data; refreshed at most every cache_seconds, by one request at a time.
+
+        While one request refreshes, others get the previous snapshot instead of waiting.
+        If a refresh fails, the last good snapshot is served marked stale and GitHub is not
+        asked again until the back-off has passed; with no snapshot yet, the error is raised
+        (also without retrying during the back-off).
+        """
         with self._lock:
-            if self._snapshot and self.clock() - self._snapshot[0] < self.cache_seconds:
-                return self._snapshot[1]
+            while True:
+                now = self.clock()
+                previous = self._snapshot
+                if previous and now - previous[0] < self.cache_seconds:
+                    return previous[1]
+                if now < self._retry_at:
+                    if previous:
+                        return dict(previous[1], stale=True)
+                    raise GitHubUnavailable('GitHub could not be read; retrying shortly')
+                if not self._refreshing:
+                    self._refreshing = True
+                    break
+                if previous:
+                    return previous[1]
+                self._loaded.wait(timeout=30)  # first load in progress elsewhere
+        try:
             data = self._load()
+        except GitHubUnavailable:
+            with self._lock:
+                self._refreshing = False
+                self._retry_at = self.clock() + self.backoff_seconds
+                self._loaded.notify_all()
+                if previous:
+                    return dict(previous[1], stale=True)
+            raise
+        with self._lock:
             self._snapshot = (self.clock(), data)
-            return data
+            self._refreshing = False
+            self._retry_at = 0.0
+            self._loaded.notify_all()
+        return data
+
+    def freshness(self) -> dict:
+        data = self.snapshot()
+        return {'stale': data['stale'], 'as_of': iso(data['as_of'])}
 
     def invalidate(self):
+        """Force the next read to refresh, keeping the current data as a fallback."""
         with self._lock:
-            self._snapshot = None
+            if self._snapshot:
+                self._snapshot = (float('-inf'), self._snapshot[1])
+            self._retry_at = 0.0
 
     def open_rounds(self) -> list[str]:
         """Open testing-round milestones, oldest first (the last one is the current round)."""
@@ -400,9 +474,12 @@ class GitHubIssues:
             raise GitHubUnavailable('GitHub could not be reached') from None
         if response.status_code != 201:
             raise GitHubUnavailable(f'GitHub issue creation failed ({response.status_code})')
-        self.invalidate()
         created = response.json()
-        return to_ticket(created, [], testing_rounds(self.snapshot()['milestones']))
+        with self._lock:
+            rounds = self._snapshot[1]['rounds'] if self._snapshot else []
+        self.invalidate()
+        # Built from the created issue itself: a failing refresh must not report a created issue as failed.
+        return to_ticket(created, [], rounds)
 
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']
@@ -440,6 +517,9 @@ class MemoryIssues:
 
     def open_rounds(self) -> list[str]:
         return [m['title'] for m in self._milestones if m['state'] == 'open']
+
+    def freshness(self) -> dict:
+        return {'stale': False, 'as_of': iso(self.clock())}
 
     def create_issue(self, *, testing_round: str, **fields) -> dict:
         milestone = next((m for m in self._milestones if m['title'] == testing_round.strip() and m['state'] == 'open'), None)

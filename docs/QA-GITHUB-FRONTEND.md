@@ -167,8 +167,19 @@ There is no database option any more.
 | `PERPERIS_QA_GITHUB_REPO` | default `krummb/kattens-pt` |
 | `PERPERIS_QA_GITHUB_PRIVATE_KEY` or `..._PRIVATE_KEY_FILE` | the App private key (**secret**: Secret Manager in staging; never in Git, logs or chat) |
 
-Reads are cached for 60 seconds (a report clears the cache). The UI shows
-issue numbers (`#12`) with a link to GitHub.
+Reads are cached for 60 seconds (a report triggers a refresh). The UI shows
+issue numbers (`#12`) with a link to GitHub. To stay far below the App's
+5,000 requests an hour and keep pages fast:
+- an issue's event history is fetched again only when its `updated_at`
+  changes (labelling, closing, reopening and comments all change it);
+- the issue and milestone lists are conditional requests (`If-None-Match`);
+  GitHub answers "not modified" without counting it against the limit;
+- only one request refreshes at a time and GitHub is never called while
+  holding the lock; others keep getting the previous data meanwhile;
+- if a refresh fails, the last good data is served **marked stale** (the
+  dashboard says "GitHub can't be reached right now. Showing data from
+  HH:MM") and GitHub is not asked again for 60 seconds. With no data yet, the
+  error is shown, also without retrying on every request.
 
 **Reporting (milestone 2).** "Report a bug" creates the issue as
 `perperis-qa[bot]` with labels `qa`, `bug`, `sev:<severity>` and `area:<name>`
