@@ -58,7 +58,7 @@ aside. Issues live in `kattens-pt`; the QA code stays here, in
 | Testing round R05 | Milestone `R05` |
 | Severity | Labels `sev:critical` / `sev:high` / `sev:medium` / `sev:low` |
 | Area | Labels `area:<name>` (e.g. `area:library`, `area:today`) |
-| Status | Open + `status:triaged` / `status:in-progress` / `status:fixed` / `status:deployed`; closed = verified; reopened = open again with a comment |
+| Status | `status:triaged` / `status:in-progress` / `status:fixed` / `status:deployed` / `status:verified`; a PR closing the issue means fixed (decision 4.4); Verify adds `status:verified`; reopened = open again with a comment |
 | Steps, expected/actual, environment, deploy # | Fixed headings in the issue body |
 | Reporter / verifier | Line "Reported by `<name>` via PERPERIS QA" / "Verified by `<name>`" |
 | Discussion, resolution notes | Issue comments |
@@ -68,6 +68,25 @@ merges referencing it → `deploy-cloud-run` in `kattens-pt` adds
 `status:deployed` and comments "Live in Deploy #N" for issues fixed in that
 deploy → the creator presses **Verify** in QA (closes the issue) or
 **Reopen**.
+
+Created in `kattens-pt` on 2026-11-11 (owner-approved): labels `qa`, `task`
+(`bug` already existed), `sev:critical|high|medium|low`,
+`status:triaged|in-progress|fixed|deployed|verified`, `area:today|coach|workouts|
+library|training-mode|progress|settings|admin|auth`; milestone `R05`.
+
+How a ticket is derived from an issue (milestone 1, `github_issues.py`):
+- **Status**: closed with `status:verified` → verified; closed as not planned
+  or duplicate → closed; other closed → deployed (with `status:deployed`) or
+  fixed; open → reopened if a reopen is newer than its status labels, else the
+  most advanced `status:*` label, else reported.
+- **Milestone dates**: fixed = earliest of the first `status:fixed` /
+  `status:deployed` / `status:verified` label or the first non-"not planned"
+  close; deployed = first `status:deployed` (or verified); verified = first
+  `status:verified`. Reopening never erases them.
+- **Rounds**: found in the issue's `R##` milestone (or "No round"); fixed and
+  verified count in the round in progress at that moment, i.e. the newest
+  `R##` milestone created before it.
+- No severity label shows as "No severity"; nothing is guessed.
 
 Analytics (found/fixed/verified per round, backlog, crossover) are computed
 from issue timeline events (created, labeled, closed, reopened): deterministic,
@@ -110,6 +129,23 @@ rule.
    workflow**, as a small added step using the workflow's own token (same
    repo, no extra secret, normal PR review there).
 
+## Configuration (GitHub mode)
+
+Tickets come from GitHub when `PERPERIS_QA_TICKET_SOURCE=github`; the default
+(`database`) keeps the old ticket store for local development and tests.
+
+| Variable | Value |
+|---|---|
+| `PERPERIS_QA_GITHUB_APP_ID` | `5711212` (not secret) |
+| `PERPERIS_QA_GITHUB_INSTALLATION_ID` | `180847731` (not secret) |
+| `PERPERIS_QA_GITHUB_REPO` | default `krummb/kattens-pt` |
+| `PERPERIS_QA_GITHUB_PRIVATE_KEY` or `..._PRIVATE_KEY_FILE` | the App private key (**secret**: Secret Manager in staging; never in Git, logs or chat) |
+
+Reads are cached for 60 seconds. In milestone 1 GitHub mode is read-only:
+creating or changing tickets returns 405, screenshots are off, and the UI shows
+issue numbers (`#12`) with a link to GitHub. Sign-in, roles and members are
+unchanged (still database-backed until the identity rework).
+
 ## 5. Suggested milestones
 
 Each is its own PR in `Feniger/PERPERIS_QA` unless noted. One milestone per
@@ -119,7 +155,8 @@ PR; merging follows the rule in section 6.
    `kattens-pt`'s `docs/control/DECISION-LOG.md`). Fix the stale README and
    this release plan's framing. Branch cleanup (merged Cloud-Foundation
    branches) is owner/creator housekeeping, not part of this PR.
-1. **GitHub adapter, read-only**: replace ticket reads and analytics with
+1. **GitHub adapter, read-only** (built 2026-11-11; App registered and
+   installed, labels and `R05` created): replace ticket reads and analytics with
    issue reads (labels, milestones, timeline). Dashboard and ticket list show
    real `kattens-pt` issues labeled `qa`. Owner registers and installs the
    GitHub App; labels and milestones get created in `kattens-pt`.

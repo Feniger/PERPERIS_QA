@@ -6,17 +6,19 @@ const STATUSES = ['reported', 'triaged', 'in_progress', 'fixed', 'deployed', 've
 const DONE = ['verified', 'closed'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const SEV_RANK = {critical: 0, high: 1, medium: 2, low: 3};
-const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',fixed:'Fixed',deployed:'Deployed',verified:'Verified',closed:'Closed',reopened:'Reopened',ui_ux:'UI / UX',coach_ai:'Coach / AI'};
+const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',fixed:'Fixed',deployed:'Deployed',verified:'Verified',closed:'Closed',reopened:'Reopened',ui_ux:'UI / UX',coach_ai:'Coach / AI',unset:'No severity',bug:'Bug',task:'Task'};
 let tickets = [], analytics = null, editing = null, lastFocus = null, selectedRound = null, loaded = false, session = {role:'Admin'};
 /* Statuses each role may set. Mirrors the server's role matrix (the server enforces it). */
 const ROLE_STATUSES = {Developer:['triaged','in_progress','fixed','deployed'], Tester:['verified','closed','reopened']};
 const allowedStatuses = () => STATUSES.filter(s => session.role==='Admin' || (ROLE_STATUSES[session.role]||[]).includes(s));
 const managed = () => qaIdentity.config?.mode === 'identity';
+/* Milestone 1: tickets can come read-only from GitHub issues (see docs/QA-GITHUB-FRONTEND.md). */
+const githubMode = () => qaIdentity.config?.tickets_source === 'github';
 
 const label = value => LABELS[value] || String(value || '—').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const toNum = x => Number.isFinite(+x) ? +x : 0;
-const ticketNo = id => `QA-${String(id).padStart(3,'0')}`;
+const ticketNo = id => githubMode() ? `#${id}` : `QA-${String(id).padStart(3,'0')}`;
 const formatDate = value => value ? new Date(value).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 function ago(value){
   const t = Date.parse(value); if(!Number.isFinite(t)) return '—';
@@ -45,7 +47,7 @@ async function initial(){
     const admin=managed()&&session.role==='Admin';
     $('manage-members').classList.toggle('hidden',!admin);$('manage-members-mobile').classList.toggle('hidden',!admin);
     $('who').textContent=managed()?`${session.name} · ${session.role}`:'';
-    applyIdentityToQuick();route();await refresh();
+    applyIdentityToQuick();applyTicketSource();route();await refresh();
   }
   catch(e){toggleSession(false);if(e.status===503) $('login-error').textContent=e.message;}
 }
@@ -220,6 +222,14 @@ function applyIdentityToQuick(){
   const r=$('q-reporter');r.readOnly=managed();if(managed()||!r.value) r.value=defaultReporter();
   $('quick-note').textContent=qaScreenshots.enabled()?'Plain form. No AI. To attach screenshots, use Add details.':'Plain form. No AI. Screenshots are switched off on this server.';
 }
+/* Read-only while tickets come from GitHub: reporting and status changes return in the next milestone. */
+function applyTicketSource(){
+  const readOnly=githubMode();
+  const why=readOnly?`Tickets are GitHub issues in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}. Reporting from QA comes in the next milestone; report on GitHub for now.`:'';
+  ['quick-submit','quick-details'].forEach(id=>{$(id).disabled=readOnly;$(id).title=why;});
+  document.querySelectorAll('[data-new-ticket]').forEach(b=>{b.disabled=readOnly;b.title=why;});
+  if(readOnly) $('quick-note').textContent=why;
+}
 function prefillQuick(){
   if(!$('q-reporter').value) $('q-reporter').value=defaultReporter();
   if(!$('q-round').value) $('q-round').value=latestRound()||'R01';
@@ -246,7 +256,7 @@ function setDialogMode(create){
 }
 function newTicket(prefill={}){
   editing=null;const form=$('ticket-form');form.reset();setDialogMode(true);
-  $('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');
+  $('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.remove('hidden');
   $('modal-eyebrow').textContent='Issue intake';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';
   qaScreenshots.reset();
   form.elements.reporter.readOnly=managed();
@@ -259,7 +269,7 @@ function newTicket(prefill={}){
 }
 function openEdit(id){
   const ticket=tickets.find(t=>t.id===id);if(!ticket)return;editing=ticket;$('ticket-form').reset();setDialogMode(false);
-  $('create-fields').classList.add('hidden');$('update-fields').classList.remove('hidden');
+  $('create-fields').classList.add('hidden');$('update-fields').classList.toggle('hidden',githubMode());$('form-submit').classList.toggle('hidden',githubMode());
   $('modal-eyebrow').textContent=`${ticketNo(id)} / Ticket detail`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save ticket';$('form-error').textContent='';
   qaScreenshots.reset(id);
   $('ticket-detail').innerHTML=`<p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;

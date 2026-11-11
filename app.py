@@ -17,6 +17,7 @@ from database import Database
 import identity
 import attachments
 import runtime_guard
+import github_issues
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parent
@@ -43,8 +44,13 @@ async def lifespan(app: FastAPI):
         identity.check_configuration()
         initialize()
         APP.state.attachments = attachments.configured_store()
+        APP.state.github = github_issues.from_env(os.environ)
         yield
     finally:
+        github = getattr(APP.state, 'github', None)
+        if github is not None:
+            github.close()
+        APP.state.github = None
         DATABASE.close()
 
 
@@ -159,17 +165,37 @@ def me(user:identity.Principal=Depends(current_user)):
     return {'name':user.name, 'role': user.role}
 
 
+def github():
+    """The GitHub issues adapter when tickets come from GitHub, else None."""
+    return getattr(APP.state, 'github', None)
+
+
+GITHUB_READ_ONLY = ('Tickets are GitHub issues. Reporting and status changes from QA arrive in the '
+                    'next milestone; use GitHub for now.')
+
+
+def github_tickets(source):
+    try:
+        return source.tickets()
+    except github_issues.GitHubUnavailable:
+        raise HTTPException(502, 'GitHub could not be read. Try again shortly.') from None
+
+
 def validate_enum(value, choices, field):
     if value not in choices:
         raise HTTPException(422,f'Invalid {field}')
 
 @APP.get('/api/tickets')
 def tickets(user:identity.Principal=Depends(current_user)):
+    if github():
+        return {'tickets': github_tickets(github())}
     with connection() as db:
         return {'tickets':[dict(row) for row in db.execute('SELECT * FROM tickets ORDER BY created_at DESC, id DESC').fetchall()]}
 
 @APP.post('/api/tickets',status_code=201)
 def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mutation)):
+    if github():
+        raise HTTPException(405, GITHUB_READ_ONLY)
     validate_enum(payload.category,VALID_CATEGORY,'category')
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
     dt=now()
@@ -186,6 +212,8 @@ def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mut
 
 @APP.patch('/api/tickets/{ticket_id}')
 def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Depends(guard_mutation)):
+    if github():
+        raise HTTPException(405, GITHUB_READ_ONLY)
     validate_enum(payload.status,VALID_STATUS,'status')
     with connection(write=True) as db:
         identity.authorize_member(db, user)
@@ -216,8 +244,15 @@ def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Dep
 
 @APP.get('/api/analytics')
 def analytics(user:identity.Principal=Depends(current_user)):
+    if github():
+        return compute_analytics(github_tickets(github()))
     with connection() as db:
         rows=[dict(x) for x in db.execute('SELECT * FROM tickets').fetchall()]
+    return compute_analytics(rows)
+
+
+def compute_analytics(rows):
+    """Deterministic figures from ticket rows (database rows or GitHub-derived tickets)."""
     categories={};severity={};reporters={};rounds={}
     closed={'verified','closed'}
     for t in rows:
@@ -256,7 +291,11 @@ class MemberUpdate(BaseModel):
 def auth_config():
     check_runtime()
     identity.check_configuration()
-    result = {'mode': identity.mode(), 'attachments_enabled': getattr(APP.state, 'attachments', None) is not None}
+    result = {'mode': identity.mode(),
+              'attachments_enabled': getattr(APP.state, 'attachments', None) is not None and not github(),
+              'tickets_source': 'github' if github() else 'database'}
+    if github():
+        result['tickets_repo'] = github().config.repo
     if identity.mode() == 'identity':
         # Browser API key is public project configuration, never an Admin SDK key.
         result['web_api_key'] = os.getenv('PERPERIS_QA_IDENTITY_WEB_API_KEY', '')
@@ -292,6 +331,14 @@ def update_member(subject: str, payload: MemberUpdate, user=Depends(guard_mutati
 
 @APP.get('/api/tickets/{ticket_id}/history')
 def ticket_history(ticket_id: int, user=Depends(current_user)):
+    if github():
+        try:
+            events = github().history(ticket_id)
+        except github_issues.GitHubUnavailable:
+            raise HTTPException(502, 'GitHub could not be read. Try again shortly.') from None
+        if events is None:
+            raise HTTPException(404, 'Ticket not found')
+        return {'events': events, 'changes': []}
     with connection() as db:
         if db.execute('SELECT id FROM tickets WHERE id=?', (ticket_id,)).fetchone() is None:
             raise HTTPException(404, 'Ticket not found')
@@ -320,7 +367,7 @@ async def security_headers(request: Request, call_next):
 
 def attachment_service():
     store = getattr(APP.state, 'attachments', None)
-    if store is None:
+    if store is None or github():
         raise HTTPException(404, 'Screenshots are not enabled')
     return attachments.Attachments(DATABASE, store)
 
