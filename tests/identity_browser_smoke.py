@@ -92,6 +92,7 @@ def main():
                         expect(admin.locator('[name=reporter]')).to_have_value('admin')
                         assert admin.locator('[name=reporter]').get_attribute('readonly') is not None
                         admin.locator('[name=title]').fill('Synthetic HTTPS member ticket')
+                        admin.locator('[name=description]').fill('Expected a list, saw nothing')
                         admin.locator('#form-submit').click()
                         expect(admin.locator('#modal')).to_be_hidden()
                         creator_context,creator=user('creator')
