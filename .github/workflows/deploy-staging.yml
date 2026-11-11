@@ -73,8 +73,8 @@ jobs:
           gcloud run deploy "$SERVICE" \
             --project "$PROJECT_ID" --region "$REGION" --image "$DIGEST" \
             --service-account "$RUNTIME_SA" \
-            --min-instances 0 --max-instances 2 --concurrency 4 --cpu 1 --memory 512Mi \
-            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_TICKET_SOURCE=github,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_GITHUB_APP_ID=$GITHUB_APP_ID,PERPERIS_QA_GITHUB_INSTALLATION_ID=$GITHUB_INSTALLATION_ID,PERPERIS_QA_GITHUB_REPO=$TICKETS_REPO,PERPERIS_QA_CONCURRENCY=4" \
+            --min-instances 0 --max-instances 2 --concurrency 16 --cpu 1 --memory 512Mi \
+            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_TICKET_SOURCE=github,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_GITHUB_APP_ID=$GITHUB_APP_ID,PERPERIS_QA_GITHUB_INSTALLATION_ID=$GITHUB_INSTALLATION_ID,PERPERIS_QA_GITHUB_REPO=$TICKETS_REPO,PERPERIS_QA_CONCURRENCY=16" \
             --set-secrets "PERPERIS_QA_SECRET=perperis-qa-secret:latest,PERPERIS_QA_MEMBERS=perperis-qa-members:latest,PERPERIS_QA_GITHUB_PRIVATE_KEY=perperis-qa-github-key:latest,PERPERIS_QA_IDENTITY_WEB_API_KEY=perperis-qa-web-api-key:latest,PERPERIS_QA_GITHUB_WEBHOOK_SECRET=perperis-qa-webhook-secret:latest" \
             --allow-unauthenticated
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"

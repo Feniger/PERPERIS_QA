@@ -5,7 +5,7 @@ import os
 def settings():
     try:
         port = int(os.getenv('PORT', '8080'))
-        concurrency = int(os.getenv('PERPERIS_QA_CONCURRENCY', '4'))
+        concurrency = int(os.getenv('PERPERIS_QA_CONCURRENCY', '16'))
     except ValueError:
         raise ValueError('Invalid port or concurrency setting') from None
     if not 1 <= port <= 65535 or not 1 <= concurrency <= 32:
