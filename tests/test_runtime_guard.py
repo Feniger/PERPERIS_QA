@@ -1,16 +1,15 @@
-"""Runtime gate contract (QA-CLOUD-06). Pure Python: no web stack, network or cloud API."""
+"""Runtime gate contract. Pure Python: no web stack, network or cloud API."""
 import unittest
 
-import runtime_guard
 from runtime_guard import StartupBlocked, check
 
-TLS_URL = 'postgresql://qa_runtime:synthetic@db.example.test/qa?sslmode=require'
+MEMBERS = 'owner@example.test=Admin,creator@example.test=Admin'
 STAGING = {
     'K_SERVICE': 'perperis-qa-staging',
     'PERPERIS_QA_ENV': 'staging',
     'PERPERIS_QA_AUTH_MODE': 'identity',
-    'PERPERIS_QA_DATABASE_URL': TLS_URL,
-    'PERPERIS_QA_ATTACHMENT_BACKEND': 'gcs',
+    'PERPERIS_QA_TICKET_SOURCE': 'github',
+    'PERPERIS_QA_MEMBERS': MEMBERS,
 }
 
 
@@ -21,7 +20,7 @@ class RuntimeGuardTests(unittest.TestCase):
         self.assertIn('cloud startup is blocked', str(exc.exception))
         return str(exc.exception)
 
-    def test_local_off_cloud_run_is_unchanged(self):
+    def test_local_off_cloud_run_is_allowed(self):
         self.assertEqual(check({}), 'local')
         self.assertEqual(check({'PERPERIS_QA_ENV': 'local'}), 'local')
 
@@ -29,8 +28,7 @@ class RuntimeGuardTests(unittest.TestCase):
         for service in ('perperis-qa', ''):
             with self.subTest(service=service):
                 self.blocked({'K_SERVICE': service})
-                self.blocked({'K_SERVICE': service, 'PERPERIS_QA_ENV': 'local', 'PERPERIS_QA_AUTH_MODE': 'identity',
-                              'PERPERIS_QA_DATABASE_URL': TLS_URL})
+                self.blocked({**STAGING, 'K_SERVICE': service, 'PERPERIS_QA_ENV': 'local'})
 
     def test_production_and_unknown_stages_stay_blocked_even_when_fully_configured(self):
         for stage in ('production', 'prod', 'cloud', 'LOCAL', 'Staging', ''):
@@ -39,40 +37,39 @@ class RuntimeGuardTests(unittest.TestCase):
 
     def test_validated_staging_is_allowed(self):
         self.assertEqual(check(STAGING), 'staging')
-        self.assertEqual(check({**STAGING, 'PERPERIS_QA_ATTACHMENT_BACKEND': 'disabled'}), 'staging')
-        for mode in ('verify-ca', 'verify-full'):
-            url = TLS_URL.replace('sslmode=require', f'sslmode={mode}&sslrootcert=system')
-            self.assertEqual(check({**STAGING, 'PERPERIS_QA_DATABASE_URL': url}), 'staging')
+        self.assertEqual(check({k: v for k, v in STAGING.items() if k != 'K_SERVICE'}), 'staging')
 
-    def test_staging_never_uses_shared_password(self):
-        for auth in ('local_shared', '', 'IDENTITY'):
-            with self.subTest(auth=auth):
-                self.blocked({**STAGING, 'PERPERIS_QA_AUTH_MODE': auth})
-        env = dict(STAGING); del env['PERPERIS_QA_AUTH_MODE']
-        self.blocked(env)
+    def test_staging_never_uses_the_shared_password(self):
+        for mode in (None, 'local_shared', 'IDENTITY', ''):
+            env = dict(STAGING)
+            env.pop('PERPERIS_QA_AUTH_MODE')
+            if mode is not None:
+                env['PERPERIS_QA_AUTH_MODE'] = mode
+            with self.subTest(mode=mode):
+                self.assertIn('identity', self.blocked(env))
 
-    def test_staging_requires_tls_postgres(self):
-        bad = ['', 'sqlite:///qa.sqlite3', 'postgresql://u:p@db.example.test/qa',
-               'postgresql://u:p@db.example.test/qa?sslmode=disable', 'postgresql://u:p@db.example.test/qa?sslmode=prefer',
-               'postgresql://u:p@db.example.test/qa?sslmode=allow', 'postgresql:///qa?sslmode=require',
-               'postgresql://u:p@db.example.test/qa?sslmode=require&sslmode=disable', 'mysql://u:p@db.example.test/qa?sslmode=require']
-        for url in bad:
-            with self.subTest(url=url):
-                self.blocked({**STAGING, 'PERPERIS_QA_DATABASE_URL': url})
+    def test_staging_requires_github_issues(self):
+        for source in (None, 'memory', 'database', 'GitHub'):
+            env = dict(STAGING)
+            env.pop('PERPERIS_QA_TICKET_SOURCE')
+            if source is not None:
+                env['PERPERIS_QA_TICKET_SOURCE'] = source
+            with self.subTest(source=source):
+                self.assertIn('GitHub issues', self.blocked(env))
 
-    def test_database_credentials_never_appear_in_the_error(self):
-        message = self.blocked({**STAGING, 'PERPERIS_QA_DATABASE_URL': 'postgresql://qa:supersecret@db.example.test/qa'})
-        self.assertNotIn('supersecret', message)
-        self.assertNotIn('db.example.test', message)
-
-    def test_staging_screenshots_are_private_bucket_or_off(self):
-        for backend in ('local', 'unknown', 'GCS'):
-            with self.subTest(backend=backend):
-                self.blocked({**STAGING, 'PERPERIS_QA_ATTACHMENT_BACKEND': backend})
+    def test_staging_requires_a_member_list_and_never_echoes_it(self):
+        for members in (None, '', '   '):
+            env = dict(STAGING)
+            env.pop('PERPERIS_QA_MEMBERS')
+            if members is not None:
+                env['PERPERIS_QA_MEMBERS'] = members
+            with self.subTest(members=members):
+                message = self.blocked(env)
+                self.assertIn('member list', message)
+                self.assertNotIn('example.test', message)
 
     def test_blocked_error_is_a_runtime_error(self):
         self.assertTrue(issubclass(StartupBlocked, RuntimeError))
-        self.assertTrue(runtime_guard.BLOCKED.startswith('PERPERIS QA cloud startup is blocked'))
 
 
 if __name__ == '__main__':

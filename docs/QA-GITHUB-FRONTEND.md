@@ -184,8 +184,23 @@ Reported by <member name> via PERPERIS QA
 `@` in user text is neutralised so a report cannot ping GitHub users, and the
 last "Reported by" line wins, so text above it cannot impersonate a reporter.
 In managed sign-in the reporter is the signed-in member; in local mode, the
-typed name. Status changes from QA still return 405 until milestone 3, and
-screenshots stay off in GitHub mode (see milestone 2 below). Sign-in, roles and members are
+typed name. Status changes from QA return 405 until milestone 3, and
+screenshots are off (see milestone 2 below).
+
+**Local development (milestone 2b).** `PERPERIS_QA_TICKET_SOURCE=memory` (the
+default) is an in-memory stand-in for the repository with one open round,
+`R01`. It uses the same request builder and issue mapping as GitHub, so the UI
+behaves the same; data disappears on restart. Staging refuses it.
+
+**Sign-in (milestone 2b).** `PERPERIS_QA_MEMBERS` is `email=Role` pairs
+separated by commas (Admin, Developer, Tester; at least one Admin), kept in the
+secret store. Identity Platform verifies password and email; an email not on
+the list is refused ("not on the QA member list"). The session cookie
+(`qa_session`, Secure, HttpOnly, SameSite=Strict, 8 hours) carries the signed
+identity but not the role: the role is looked up on every request, so removing
+someone from the list (and redeploying) ends their access at once. Rotating
+`PERPERIS_QA_SECRET` signs everyone out. Identity Platform disabling or
+revoking an account also ends its session. Sign-in, roles and members are
 unchanged (still database-backed until the identity rework).
 
 ## 5. Suggested milestones
@@ -207,7 +222,7 @@ PR; merging follows the rule in section 6.
    no-database rework:** their records live in database rows tied to the old
    ticket table. With decision 4.2 they come back later as bucket-only
    objects keyed by issue number (private bucket, linked from the issue).
-2b. **Lean identity, no QA storage** (decision 4.2): email→role list,
+2b. **Lean identity, no QA storage** (built 2026-11-11; decision 4.2): email→role list,
    signed session cookie, logs for security events; GitHub becomes the only
    ticket source; the database layer, SQL migrations, importer and member
    screen are removed. This is what makes staging small.
