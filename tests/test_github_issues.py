@@ -132,7 +132,7 @@ class Mapping(unittest.TestCase):
         self.assertEqual(steps, [(None, 'reported'), ('reported', 'triaged'), ('triaged', 'fixed'), ('fixed', 'reopened')])
 
     def test_round_at_uses_newest_round_opened_before_the_event(self):
-        self.assertEqual([r[1] for r in ROUNDS], ['R05', 'R06'])
+        self.assertEqual([r[1] for r in ROUNDS], ['R04', 'R05', 'R06'])  # closed rounds still count as history
         self.assertEqual(gh.round_at(gh.parse_time('2026-11-10T00:00:00Z'), ROUNDS, 'R04'), 'R04')
         self.assertEqual(gh.round_at(gh.parse_time('2026-11-25T00:00:00Z'), ROUNDS, 'R05'), 'R06')
 
