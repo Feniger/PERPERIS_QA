@@ -4,8 +4,8 @@
 > 2026-11-10 (PRs #1–#5) and QA-CLOUD-06 (#7) was merged as code but never set
 > up. On 2026-11-11 the owner and creator decided that PERPERIS QA becomes a
 > front end on GitHub issues in `krummb/kattens-pt`, with no ticket database
-> and no QA database at all (roles as Identity Platform claims, stateless
-> sessions). The current plan is [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md).
+> and no storage of its own (members as an email→role list in configuration,
+> signed session cookies; decision 4.2). The current plan is [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md).
 > The text below describes the earlier self-hosted ticket design; its
 > staging-evidence and secrets guidance may still inform milestone 4 there, but
 > its Cloud SQL, importer and data-cutover sections no longer apply.
