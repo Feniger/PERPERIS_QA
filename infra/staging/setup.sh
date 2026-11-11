@@ -13,7 +13,8 @@
 #   - perperis-qa-web-api-key: the public browser key, created here
 #   - perperis-qa-github-key, perperis-qa-members: created EMPTY; the owner adds their
 #     values in the console (Secret Manager > secret > New version). See the doc.
-# There is no database and no screenshot bucket. See docs/QA-CLOUD-06-STAGING.md.
+# There is no database. The screenshot bucket has its own script, screenshots-bucket.sh.
+# See docs/QA-CLOUD-06-STAGING.md.
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-perperis-qa-staging}"
