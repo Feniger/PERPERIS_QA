@@ -224,6 +224,17 @@ and `DELETE .../screenshots/{id}` (uploader or Admin). Upload and list
 check that the issue is a QA ticket. `/api/auth/config` reports
 `screenshots_enabled`.
 
+**Screenshot comment and retention (decision 4.1, step 4).** After every
+upload or delete QA edits its one comment on the issue ("📎 N screenshots in
+PERPERIS QA: <QA>/#ticket-N"; "No screenshots … any more" at zero), found by a
+hidden marker and the App's bot account, so people's comments are never
+touched. The link opens the ticket in QA. **Verify** sets `customTime` on the
+issue's images (the bucket deletes them 30 days later); **Reopen** replaces
+each image with an identical copy without `customTime` (Cloud Storage cannot
+clear it). Both are best effort after the status change; failures are logged
+and the 365-day limit still applies. Closing a ticket without Verify does not
+start the 30-day clock.
+
 **Reporting (milestone 2).** "Report a bug" creates the issue as
 `perperis-qa[bot]` with labels `qa`, `bug`, `sev:<severity>` and `area:<name>`
 when the area matches an area label, and the chosen round's milestone. The

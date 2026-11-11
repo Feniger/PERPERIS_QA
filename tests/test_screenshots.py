@@ -165,6 +165,26 @@ class Service(unittest.TestCase):
         self.assertEqual([i['id'] for i in self.service.list(7, subject=None, is_admin=True)], [new['id']])
         self.assertEqual(len(self.store.objects), 1)
 
+    def test_verify_marks_and_reopen_rewrites_without_custom_time(self):
+        first, second = self.upload(), self.upload()
+        self.assertEqual(self.service.mark_verified(7), 0)
+        names = sorted(self.store.objects)
+        self.assertEqual({self.store.custom_times[n] for n in names}, {self.now[0]})
+        generations = {n: self.store.objects[n][0] for n in names}
+        self.assertEqual(self.service.clear_verified(7), 0)
+        self.assertEqual(self.store.custom_times, {})
+        self.assertTrue(all(self.store.objects[n][0] > generations[n] for n in names))   # new generation
+        # Upload time survives the rewrite, so the 365-day limit still counts from the upload.
+        self.assertEqual({i['uploaded_at'] for i in self.service.list(7, subject=None, is_admin=True)},
+                         {first['uploaded_at'], second['uploaded_at']})
+
+    def test_custom_time_failures_are_counted_not_raised(self):
+        self.upload()
+        with patch.object(self.store, 'set_custom_time', side_effect=OSError('down')):
+            self.assertEqual(self.service.mark_verified(7), 1)
+        with patch.object(self.store, 'rewrite_without_custom_time', side_effect=OSError('down')):
+            self.assertEqual(self.service.clear_verified(7), 1)
+
     def test_upload_throttle_per_member(self):
         screenshots._uploads.clear()
         self.addCleanup(screenshots._uploads.clear)
@@ -198,6 +218,11 @@ class Configuration(unittest.TestCase):
         for ubla, pap in ((False, 'enforced'), (True, 'inherited'), (True, 'unspecified')):
             with self.subTest(ubla=ubla, pap=pap), self.assertRaises(RuntimeError):
                 store(ubla, pap).check_private()
+
+
+def fixture_origin():
+    import test_identity
+    return test_identity.ORIGIN
 
 
 class Api(unittest.TestCase):
@@ -300,6 +325,33 @@ class Api(unittest.TestCase):
             response = self.upload()
         self.assertEqual(response.status_code, 503)
         self.assertNotIn('secret-bucket', response.text)
+
+    def test_github_comment_is_posted_once_and_edited(self):
+        tickets = self.app.APP.state.tickets
+        first = self.upload().json()['screenshot']
+        self.upload()
+        comment = tickets.screenshot_comments[self.ticket]
+        self.assertIn('📎 2 screenshots in PERPERIS QA: ' + fixture_origin() + f'/#ticket-{self.ticket}', comment)
+        self.assertNotIn('@', comment)
+        self.client.delete(self.path('/' + first['id']), headers=self.headers)
+        self.assertIn('📎 1 screenshot in PERPERIS QA', tickets.screenshot_comments[self.ticket])
+
+    def test_comment_failure_does_not_fail_the_upload(self):
+        with patch.object(self.app.APP.state.tickets, 'upsert_screenshot_comment', side_effect=RuntimeError('GitHub down')):
+            self.assertEqual(self.upload().status_code, 201)
+        self.assertEqual(len(self.store.objects), 1)
+
+    def test_verify_and_reopen_set_and_clear_the_deletion_clock(self):
+        self.upload()
+        [name] = self.store.objects
+        self.sign_in('tester@example.test')
+        for status, expected in (('verified', True), ('reopened', False), ('verified', True)):
+            changed = self.client.patch(f'/api/tickets/{self.ticket}', headers=self.headers, json={'status': status})
+            self.assertEqual(changed.status_code, 200, changed.text)
+            self.assertEqual(name in self.store.custom_times, expected, status)
+        with patch.object(self.store, 'rewrite_without_custom_time', side_effect=OSError('down')):
+            changed = self.client.patch(f'/api/tickets/{self.ticket}', headers=self.headers, json={'status': 'reopened'})
+        self.assertEqual(changed.status_code, 200)   # the status change stands; the 365-day limit still applies
 
     def test_disabled_when_no_store(self):
         self.app.APP.state.screenshots = None
