@@ -109,8 +109,7 @@ def main():
                         expect(page.locator('#k-fixed')).to_have_text('1')
                         expect(page.locator('#ticket-rows .chip')).to_have_text('Fixed')
                         # The link in QA's GitHub comment (#ticket-N) opens that ticket.
-                        page.goto(origin + '#ticket-1')
-                        page.reload()
+                        page.goto(origin + '#ticket-1')   # same page: the hash change opens it
                         expect(page.locator('#modal')).to_be_visible()
                         expect(page.locator('#modal-title')).to_have_text('Synthetic browser report')
                         expect(page.locator('#screenshot-existing .screenshot-item')).to_have_count(1)
