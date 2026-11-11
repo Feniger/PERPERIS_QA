@@ -123,6 +123,42 @@ class Mapping(unittest.TestCase):
         self.assertEqual(t['status'], 'reopened')
         self.assertEqual(t['fixed_at'], '2026-11-12T10:00:00+00:00')
 
+    def test_newest_status_label_wins_after_reopen(self):
+        # Review scenario 1: fixed -> deployed -> reopened -> in progress again. Old labels stay on the issue.
+        events = [ev('labeled', '2026-11-12T10:00:00Z', name='status:fixed', id_=1),
+                  ev('closed', '2026-11-12T10:05:00Z', reason='completed', id_=2),
+                  ev('labeled', '2026-11-12T11:00:00Z', name='status:deployed', id_=3),
+                  ev('reopened', '2026-11-13T09:00:00Z', id_=4),
+                  ev('labeled', '2026-11-13T09:30:00Z', name='status:in-progress', id_=5)]
+        t = gh.to_ticket(issue(20, 'Back in progress', labels=['qa', 'status:fixed', 'status:deployed', 'status:in-progress']),
+                         events, ROUNDS)
+        self.assertEqual(t['status'], 'in_progress')
+        self.assertEqual(t['fixed_at'], '2026-11-12T10:00:00+00:00')  # first milestones survive a reopen
+
+    def test_old_verified_label_does_not_make_a_new_fix_verified(self):
+        # Review scenario 2: verified -> reopened -> closed again by a new PR: fixed, not verified.
+        events = [ev('closed', '2026-11-12T10:00:00Z', reason='completed', id_=1),
+                  ev('labeled', '2026-11-12T12:00:00Z', name='status:verified', id_=2),
+                  ev('reopened', '2026-11-20T09:00:00Z', id_=3),
+                  ev('closed', '2026-11-21T09:00:00Z', reason='completed', id_=4)]
+        base = dict(state='closed', state_reason='completed')
+        t = gh.to_ticket(issue(21, 'Regressed', labels=['qa', 'status:verified'], **base), events, ROUNDS)
+        self.assertEqual(t['status'], 'fixed')
+        # Deployed again in the new cycle: deployed, still not verified.
+        later = events + [ev('labeled', '2026-11-21T10:00:00Z', name='status:deployed', id_=5)]
+        t = gh.to_ticket(issue(21, 'Regressed', labels=['qa', 'status:verified', 'status:deployed'], **base), later, ROUNDS)
+        self.assertEqual(t['status'], 'deployed')
+        # Verified again in the new cycle (Verify re-applies the label): verified.
+        again = later + [ev('labeled', '2026-11-22T10:00:00Z', name='status:verified', id_=6)]
+        t = gh.to_ticket(issue(21, 'Regressed', labels=['qa', 'status:verified', 'status:deployed'], **base), again, ROUNDS)
+        self.assertEqual(t['status'], 'verified')
+
+    def test_reopened_on_github_without_new_labels_shows_reopened(self):
+        events = [ev('labeled', '2026-11-12T10:00:00Z', name='status:verified', id_=1),
+                  ev('reopened', '2026-11-13T09:00:00Z', id_=2)]
+        t = gh.to_ticket(issue(22, 'Reopened directly on GitHub', labels=['qa', 'status:verified']), events, ROUNDS)
+        self.assertEqual(t['status'], 'reopened')
+
     def test_history_replays_status_changes(self):
         events = [ev('labeled', '2026-11-12T10:00:00Z', name='status:triaged', id_=1),
                   ev('labeled', '2026-11-12T10:01:00Z', name='area:today', id_=2),

@@ -176,6 +176,30 @@ def _timeline(events: list[dict]):
     return first_label, last_label, closes, reopens
 
 
+def current_status(issue: dict, labels: set[str], last_label: dict[str, float], reopens: list[float]) -> str:
+    """The status now, from the most recently applied status label (not the highest-ranked one).
+
+    Status labels are not removed when work moves on, so an issue can carry
+    several. Only labels applied after the latest reopen count for the current
+    cycle; a reopen newer than every status label shows as "reopened".
+    """
+    rank = {name: index for index, (name, _) in enumerate(STATUS_LABELS)}  # 0 = most advanced
+    last_reopen = reopens[-1] if reopens else None
+    present = [name for name, _ in STATUS_LABELS if name in labels]
+    # Newest application wins; labels without a recorded event fall back to the most advanced.
+    current_cycle = [name for name in present if last_reopen is None or last_label.get(name, 0) > last_reopen]
+    newest = max(current_cycle, key=lambda name: (last_label.get(name, 0), -rank[name]), default=None)
+    value = dict(STATUS_LABELS).get(newest) if newest else None
+    if issue.get('state') == 'closed':
+        if issue.get('state_reason') in NOT_FIXED_REASONS:
+            return 'closed'
+        # Closed by a merged "Fixes #N" PR counts as fixed until deployed/verified in this cycle (decision 4.4).
+        return value if value in ('verified', 'deployed') else 'fixed'
+    if last_reopen is not None and newest is None:
+        return 'reopened'
+    return value or 'reported'
+
+
 def to_ticket(issue: dict, events: list[dict], rounds: list[tuple[float, str]]) -> dict:
     """Map one GitHub issue (plus its events) to the ticket shape the QA UI uses."""
     labels = {label['name'] for label in issue.get('labels', []) if isinstance(label, dict)}
@@ -194,25 +218,7 @@ def to_ticket(issue: dict, events: list[dict], rounds: list[tuple[float, str]]) 
     deployed_at = first_label.get('status:deployed') or verified_at
     closed_at = closes[0][0] if closes else None
 
-    if issue.get('state') == 'closed':
-        if 'status:verified' in labels:
-            status = 'verified'
-        elif issue.get('state_reason') in NOT_FIXED_REASONS:
-            status = 'closed'
-        elif 'status:deployed' in labels:
-            status = 'deployed'
-        else:
-            # Closed by a merged "Fixes #N" PR: fixed, not verified (decision 4.4).
-            status = 'fixed'
-    else:
-        present = [(name, value) for name, value in STATUS_LABELS if name in labels]
-        newest_status_label = max((last_label.get(name, 0) for name, _ in present), default=0)
-        if reopens and reopens[-1] > newest_status_label:
-            status = 'reopened'
-        elif present:
-            status = present[0][1]
-        else:
-            status = 'reported'
+    status = current_status(issue, labels, last_label, reopens)
 
     severity = next((s for s in SEVERITIES if f'sev:{s}' in labels), 'unset')
     area = next((name.split(':', 1)[1] for name in sorted(labels) if name.startswith('area:')), '')
