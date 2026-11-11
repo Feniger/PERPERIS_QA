@@ -96,7 +96,7 @@ metadata `uploader` (identity subject, never an email), `uploader_name`,
 2. **Owner adds two secret values** in the console: Security > Secret Manager >
    `perperis-qa-github-key` > New version > upload the `.pem`; then
    `perperis-qa-members` > New version > paste the list. Never in chat or Git.
-3. **Deploy** (owner approves each deploy): GitHub > Feniger/PERPERIS_QA >
+3. **Deploy** (Claude Code may run it on its own after a merge to `main`, owner decision 2026-11-11; anyone with access can too): GitHub > Feniger/PERPERIS_QA >
    Actions > "Deploy staging" > Run workflow on `main`. The workflow checks that
    every secret has a value, builds and pushes the image, deploys and smoke
    tests `/api/auth/config`.

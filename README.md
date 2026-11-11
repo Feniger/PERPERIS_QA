@@ -71,7 +71,7 @@ private). `production` is always blocked.
 Staging (milestone 4) runs on Cloud Run in QA's own Google project
 `perperis-qa-staging`, set up by `infra/staging/setup.sh` and
 `infra/staging/screenshots-bucket.sh` and deployed by the manual "Deploy
-staging" workflow (owner approves each deploy); see
+staging" workflow (Claude Code may run it after merging; see §6 of QA-GITHUB-FRONTEND); see
 [docs/QA-CLOUD-06-STAGING.md](docs/QA-CLOUD-06-STAGING.md).
 
 Testing-round labels follow `R01`, `R02`, etc. A report counts as **found** in

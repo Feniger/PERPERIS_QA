@@ -383,8 +383,15 @@ per decision 4.2 (lean identity).
   the PR (a "request changes" review or an objecting comment). It leaves a
   short comment on the PR saying it merged under this rule. The creator can
   review after the merge and ask for a follow-up or a revert.
-- Still need the owner's **explicit OK every time**: any deploy (staging or
-  production), creating or changing cloud infrastructure, changing the GitHub
+- **Staging deploys (owner decision, 2026-11-11 late):** Claude Code,
+  including the scheduled QA bug autopilot, may run "Deploy staging" on its
+  own after merging to `main`, without asking. It deploys only `main`, checks
+  that the workflow's smoke test passed, and says in the PR or run summary
+  which commit went live. If a deploy fails, it reports it and does not
+  retry repeatedly; rollback is Cloud Run's previous revision
+  (QA-CLOUD-06-STAGING.md).
+- Still need the owner's **explicit OK every time**: production deploys,
+  creating or changing cloud infrastructure, changing the GitHub
   App's permissions or installation, adding or rotating secrets, and anything
   irreversible (deleting data, history or resources).
 - Pull requests from anyone else (including the creator's own agents) are
