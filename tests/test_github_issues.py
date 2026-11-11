@@ -138,8 +138,11 @@ class Mapping(unittest.TestCase):
 
 
 class Config(unittest.TestCase):
-    def test_database_is_the_default(self):
+    def test_memory_is_the_local_default_and_database_is_gone(self):
         self.assertIsNone(gh.config_from_env({}))
+        self.assertIsInstance(gh.from_env({}), gh.MemoryIssues)
+        with self.assertRaises(RuntimeError):
+            gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'database'})
 
     def test_github_mode_requires_ids_and_key(self):
         with self.assertRaises(RuntimeError):
@@ -330,7 +333,7 @@ class Reporting(unittest.TestCase):
         self.assertEqual(len(adapter.tickets()), before + 1)
 
 
-class StubAdapter:
+class StubAdapter(gh.GitHubIssues):  # counts as the GitHub source; no HTTP client
     def __init__(self, tickets):
         self._tickets = tickets
         self.config = CONFIG
@@ -362,12 +365,12 @@ class AppWiring(unittest.TestCase):
         from fastapi.testclient import TestClient
         tickets = [gh.to_ticket(i, EVENTS.get(i['number'], []), ROUNDS) for i in ISSUES if 'pull_request' not in i]
         env = {'PERPERIS_QA_ENV': 'local', 'PERPERIS_QA_AUTH_MODE': 'local_shared',
-               'PERPERIS_QA_ATTACHMENT_BACKEND': 'disabled', 'PERPERIS_QA_TICKET_SOURCE': 'database'}
+               'PERPERIS_QA_TICKET_SOURCE': 'memory'}
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(qa_app, 'ADMIN_PASSWORD', 'wiring-password-long'), \
                 mock.patch.object(qa_app, 'SECRET', 's' * 40), \
                 TestClient(qa_app.APP) as client:
-            qa_app.APP.state.github = StubAdapter(tickets)
+            qa_app.APP.state.tickets = StubAdapter(tickets)
             try:
                 self.assertEqual(client.post('/api/login', json={'password': 'wiring-password-long'}).status_code, 200)
                 config = client.get('/api/auth/config').json()
@@ -385,8 +388,8 @@ class AppWiring(unittest.TestCase):
                 created = client.post('/api/tickets', headers=headers, json=body)
                 self.assertEqual(created.status_code, 201, created.text)
                 self.assertEqual(created.json()['ticket']['id'], 101)
-                self.assertEqual(qa_app.APP.state.github.created['reporter'], 'X')
-                self.assertEqual(qa_app.APP.state.github.created['category'], 'UI / UX')
+                self.assertEqual(qa_app.APP.state.tickets.created['reporter'], 'X')
+                self.assertEqual(qa_app.APP.state.tickets.created['category'], 'UI / UX')
                 wrong = client.post('/api/tickets', headers=headers, json={**body, 'testing_round': 'R09'})
                 self.assertEqual(wrong.status_code, 422)
                 self.assertIn('R05', wrong.json()['detail'])
@@ -395,7 +398,7 @@ class AppWiring(unittest.TestCase):
                 self.assertEqual(client.get('/api/tickets/2/history').status_code, 404)
                 self.assertEqual(client.get('/api/tickets/1/attachments').status_code, 404)
             finally:
-                qa_app.APP.state.github = None
+                qa_app.APP.state.tickets = None
 
 
 if __name__ == '__main__':

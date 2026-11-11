@@ -1,4 +1,4 @@
-"""Synthetic HTTPS role/session browser test. No real identity, email or cloud API.
+"""Synthetic HTTPS member-list/session browser test. No real identity, email or cloud API.
 
 The --serve path is a test-only fixture, excluded from the container build.
 """
@@ -25,19 +25,11 @@ def serve():
     import uvicorn
     from unittest.mock import patch
     def claims(token):
-        if token not in {'admin','developer','tester','pending'}:
+        if token not in {'admin','creator','developer','tester','outsider'}:
             raise ValueError('Unknown synthetic identity')
         return {'uid':token,'email':token+'@example.test','name':token,
                 'email_verified':True,'auth_time':int(time.time())}
     with patch.object(identity,'verify_provider_token',side_effect=claims),patch.object(identity,'verify_provider_session'):
-        app.initialize()
-        for name in ('admin','developer','tester','pending'):
-            try:identity.exchange(app.DATABASE,name)
-            except __import__('fastapi').HTTPException:pass
-        identity.bootstrap(app.DATABASE,'admin')
-        actor=identity.Principal('admin','admin','Admin')
-        for name,role in (('developer','Developer'),('tester','Tester')):
-            identity.change_member(app.DATABASE,actor,name,role,'active')
         uvicorn.run(app.APP,host='127.0.0.1',port=int(os.environ['PORT']),
                     ssl_keyfile=os.environ['QA_TEST_TLS_KEY'],ssl_certfile=os.environ['QA_TEST_TLS_CERT'],access_log=False)
 
@@ -61,11 +53,12 @@ def main():
         with socket.socket() as available:
             available.bind(('127.0.0.1',0));port=available.getsockname()[1]
         origin=f'https://127.0.0.1:{port}'
-        env={k:v for k,v in os.environ.items() if k not in {'K_SERVICE','PERPERIS_QA_DATABASE_URL','FIREBASE_AUTH_EMULATOR_HOST'}}
+        env={k:v for k,v in os.environ.items() if k not in {'K_SERVICE','FIREBASE_AUTH_EMULATOR_HOST'}}
         env.update(PERPERIS_QA_ENV='local',PERPERIS_QA_AUTH_MODE='identity',PERPERIS_QA_ORIGIN=origin,
-                   PERPERIS_QA_SECRET=secrets.token_urlsafe(48),PERPERIS_QA_DB=str(Path(tmp)/'identity.sqlite3'),
+                   PERPERIS_QA_SECRET=secrets.token_urlsafe(48),PERPERIS_QA_TICKET_SOURCE='memory',
+                   PERPERIS_QA_MEMBERS='admin@example.test=Admin,creator@example.test=Admin,developer@example.test=Developer,tester@example.test=Tester',
                    PERPERIS_QA_IDENTITY_PROJECT='synthetic-project',PERPERIS_QA_IDENTITY_WEB_API_KEY='synthetic-public-browser-config',
-                   PERPERIS_QA_ATTACHMENT_BACKEND='disabled',PORT=str(port),QA_TEST_TLS_KEY=str(key_path),QA_TEST_TLS_CERT=str(cert_path))
+                   PORT=str(port),QA_TEST_TLS_KEY=str(key_path),QA_TEST_TLS_CERT=str(cert_path))
         with open(Path(tmp)/'server.log','w') as log:
             server=subprocess.Popen([sys.executable,__file__,'--serve'],cwd=ROOT,env=env,stdout=log,stderr=log)
             try:
@@ -93,40 +86,29 @@ def main():
                             return context,page
                         admin_context,admin=user('admin')
                         expect(admin.locator('#workspace')).to_be_visible()
+                        expect(admin.locator('#who')).to_have_text('admin · Admin')
+                        expect(admin.locator('#manage-members')).to_have_count(0)
                         admin.locator('#new-ticket').click()
                         expect(admin.locator('[name=reporter]')).to_have_value('admin')
                         assert admin.locator('[name=reporter]').get_attribute('readonly') is not None
-                        admin.locator('[name=title]').fill('Synthetic HTTPS role ticket')
+                        admin.locator('[name=title]').fill('Synthetic HTTPS member ticket')
                         admin.locator('#form-submit').click()
                         expect(admin.locator('#modal')).to_be_hidden()
-                        developer_context,developer=user('developer')
-                        expect(developer.locator('#workspace')).to_be_visible()
-                        developer.locator('#ticket-rows tr').click()
-                        assert developer.locator('#edit-status option').all_text_contents()==['Triaged','In progress','Fixed','Deployed']
-                        developer.locator('#edit-status').select_option('fixed')
-                        developer.locator('#form-submit').click()
-                        expect(developer.locator('#modal')).to_be_hidden()
-                        tester_context,tester=user('tester')
-                        expect(tester.locator('#workspace')).to_be_visible()
-                        tester.locator('#ticket-rows tr').click()
-                        assert tester.locator('#edit-status option').all_text_contents()==['Verified','Closed','Reopened']
-                        tester.locator('#edit-status').select_option('verified')
-                        tester.locator('#form-submit').click()
-                        expect(tester.locator('#modal')).to_be_hidden()
-                        expect(tester.locator('#k-verified')).to_have_text('1')
+                        for name,role in (('creator','Admin'),('developer','Developer'),('tester','Tester')):
+                            context,page=user(name)
+                            expect(page.locator('#who')).to_have_text(f'{name} · {role}')
+                            expect(page.locator('#ticket-rows .row-id')).to_have_text('#1')
+                            page.locator('#ticket-rows tr').click()
+                            expect(page.locator('#ticket-detail')).to_contain_text('Reported by admin')
+                            expect(page.locator('#form-submit')).to_be_hidden()
                         cookies=admin_context.cookies()
                         session=next(c for c in cookies if c['name']=='qa_session')
                         assert session['secure'] and session['httpOnly'] and session['sameSite']=='Strict'
-                        admin.locator('#manage-members').click()
-                        row=admin.locator('.member-row').filter(has_text='tester@example.test')
-                        row.locator('select').nth(1).select_option('disabled')
-                        row.locator('button').click()
-                        expect(admin.locator('#members-error')).to_contain_text('Membership saved')
-                        tester.reload()
-                        expect(tester.locator('#login')).to_be_visible()
-                        pending_context,pending=user('pending')
-                        expect(pending.locator('#login-error')).to_contain_text('pending approval')
-                        print('HTTPS identity browser smoke passed: Secure cookies, Admin/Developer/Tester workflow, membership disable and pending denial.')
+                        outsider_context,outsider=user('outsider')
+                        expect(outsider.locator('#login-error')).to_contain_text('not on the QA member list')
+                        expect(outsider.locator('#workspace')).to_be_hidden()
+                        print('HTTPS identity browser smoke passed: Secure signed cookies, member list with Admin/Developer/Tester roles, '
+                              'reporter from sign-in, read-only detail and denial for unlisted emails.')
                     finally:
                         browser.close()
             finally:

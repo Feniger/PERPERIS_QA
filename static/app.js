@@ -12,13 +12,13 @@ let tickets = [], analytics = null, editing = null, lastFocus = null, selectedRo
 const ROLE_STATUSES = {Developer:['triaged','in_progress','fixed','deployed'], Tester:['verified','closed','reopened']};
 const allowedStatuses = () => STATUSES.filter(s => session.role==='Admin' || (ROLE_STATUSES[session.role]||[]).includes(s));
 const managed = () => qaIdentity.config?.mode === 'identity';
-/* Milestone 1: tickets can come read-only from GitHub issues (see docs/QA-GITHUB-FRONTEND.md). */
+/* Tickets are GitHub issues; locally an in-memory stand-in (see docs/QA-GITHUB-FRONTEND.md). */
 const githubMode = () => qaIdentity.config?.tickets_source === 'github';
 
 const label = value => LABELS[value] || String(value || '—').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const toNum = x => Number.isFinite(+x) ? +x : 0;
-const ticketNo = id => githubMode() ? `#${id}` : `QA-${String(id).padStart(3,'0')}`;
+const ticketNo = id => `#${id}`;
 const formatDate = value => value ? new Date(value).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 function ago(value){
   const t = Date.parse(value); if(!Number.isFinite(t)) return '—';
@@ -44,8 +44,6 @@ async function initial(){
     qaIdentity.config=await api('/api/auth/config');
     $('email-label').classList.toggle('hidden',!managed());$('identity-actions').classList.toggle('hidden',!managed());$('email').required=managed();
     session=await api('/api/me');toggleSession(true);
-    const admin=managed()&&session.role==='Admin';
-    $('manage-members').classList.toggle('hidden',!admin);$('manage-members-mobile').classList.toggle('hidden',!admin);
     $('who').textContent=managed()?`${session.name} · ${session.role}`:'';
     applyIdentityToQuick();applyTicketSource();route();await refresh();
   }
@@ -224,8 +222,9 @@ function applyIdentityToQuick(){
 }
 /* GitHub mode: reports become GitHub issues; status changes return in the next milestone (detail is read-only). */
 function applyTicketSource(){
-  if(!githubMode()) return;
-  $('quick-note').textContent=`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI. Screenshots come in a later milestone.`;
+  $('quick-note').textContent=githubMode()
+    ?`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI. Screenshots come in a later milestone.`
+    :'Local test data, not GitHub: reports are kept in memory and disappear when QA restarts.';
 }
 function prefillQuick(){
   if(!$('q-reporter').value) $('q-reporter').value=defaultReporter();
@@ -254,8 +253,7 @@ function setDialogMode(create){
 function newTicket(prefill={}){
   editing=null;const form=$('ticket-form');form.reset();setDialogMode(true);
   $('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.remove('hidden');
-  /* In GitHub mode the report IS the issue, so a separate GitHub link field makes no sense. */
-  const urlField=$('ticket-form').elements.issue_url;urlField.closest('label').classList.toggle('hidden',githubMode());urlField.disabled=githubMode();
+
   $('modal-eyebrow').textContent='Issue intake';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';
   qaScreenshots.reset();
   form.elements.reporter.readOnly=managed();
@@ -268,7 +266,8 @@ function newTicket(prefill={}){
 }
 function openEdit(id){
   const ticket=tickets.find(t=>t.id===id);if(!ticket)return;editing=ticket;$('ticket-form').reset();setDialogMode(false);
-  $('create-fields').classList.add('hidden');$('update-fields').classList.toggle('hidden',githubMode());$('form-submit').classList.toggle('hidden',githubMode());
+  /* Read-only detail: status changes from QA return in milestone 3. */
+  $('create-fields').classList.add('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.add('hidden');
   $('modal-eyebrow').textContent=`${ticketNo(id)} / Ticket detail`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save ticket';$('form-error').textContent='';
   qaScreenshots.reset(id);
   $('ticket-detail').innerHTML=`<p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;
@@ -283,7 +282,7 @@ $('ticket-form').addEventListener('submit',async e=>{
   try{
     let res;
     if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_version:editing.version,status:form.elements.status.value,assigned_to:form.elements.assigned_to.value,resolution_notes:form.elements.resolution_notes.value,resolution_round:form.elements.resolution_round.value}});}
-    else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version','issue_url'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
+    else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
     /* Screenshots upload after the ticket is saved. On failure the ticket stays saved and the failed files stay queued. */
     if(qaScreenshots.queue.length){
       editing=res.ticket;
@@ -318,33 +317,6 @@ for(const [id,action] of [['register','register'],['reset-password','reset']]){
     try{$('login-error').textContent=await qaIdentity[action]($('email').value,password);}catch(err){$('login-error').textContent=err.message;}
   });
 }
-
-/* ---------- membership (Admin, managed sign-in only) ---------- */
-let membersFocus=null;
-async function openMembers(){
-  membersFocus=document.activeElement;$('members-panel').classList.remove('hidden');$('members-error').textContent='';
-  try{
-    const data=await api('/api/members');$('members-list').replaceChildren();
-    if(!data.members.length){const p=document.createElement('p');p.className='empty-line';p.textContent='No members yet.';$('members-list').append(p);}
-    for(const member of data.members){
-      const row=document.createElement('div');row.className='member-row';
-      const name=document.createElement('p');name.className='member-name';name.textContent=member.display_name+' · '+member.email;row.append(name);
-      const role=document.createElement('select');role.setAttribute('aria-label','Role for '+member.display_name);
-      for(const value of ['Admin','Developer','Tester'])role.add(new Option(value,value));role.value=member.role;row.append(role);
-      const state=document.createElement('select');state.setAttribute('aria-label','State for '+member.display_name);
-      for(const value of ['pending','active','disabled'])state.add(new Option(value,value));state.value=member.state;row.append(state);
-      const save=document.createElement('button');save.type='button';save.className='btn btn-primary';save.textContent='Save membership';
-      save.addEventListener('click',async()=>{save.disabled=true;try{await api('/api/members/'+encodeURIComponent(member.subject),{method:'PATCH',body:{role:role.value,state:state.value}});$('members-error').textContent='Membership saved. The member must sign in again.';}catch(err){$('members-error').textContent=err.message;}finally{save.disabled=false;}});
-      row.append(save);$('members-list').append(row);
-    }
-    $('members-close').focus();
-  }catch(err){$('members-error').textContent=err.message;}
-}
-function closeMembers(){$('members-panel').classList.add('hidden');membersFocus?.focus?.();}
-$('manage-members').addEventListener('click',openMembers);$('manage-members-mobile').addEventListener('click',openMembers);
-$('members-close').addEventListener('click',closeMembers);
-$('members-panel').addEventListener('click',e=>{if(e.target===$('members-panel'))closeMembers();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('members-panel').classList.contains('hidden'))closeMembers();});
 
 async function signOut(){try{await api('/api/logout',{method:'POST'})}finally{toggleSession(false);}}
 $('logout').addEventListener('click',signOut);$('logout-mobile').addEventListener('click',signOut);

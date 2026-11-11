@@ -44,7 +44,6 @@
     </nav>
     <nav aria-label="Account" class="nav nav-account">
       <p class="nav-group">Account</p>
-      <button class="nav-link nav-button hidden" id="manage-members" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Members</button>
       <p class="nav-who" id="who"></p>
       <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg>Settings<em>Next</em></span>
       <button class="nav-link nav-button" id="logout" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>Sign out</button>
@@ -54,7 +53,6 @@
   <div class="topbar" aria-label="Top bar">
     <div class="brand"><span>PERPERIS</span><i aria-hidden="true">/</i><span>QA</span></div>
     <div class="topbar-actions">
-      <button class="text-btn hidden" id="manage-members-mobile" type="button">Members</button>
       <button class="text-btn" id="logout-mobile" type="button">Sign out</button>
     </div>
   </div>
@@ -216,7 +214,7 @@
           <label class="field">Area / screen<input name="area" list="area-options" placeholder="Today, Coach, Library…"></label><datalist id="area-options"><option value="Today"><option value="Coach"><option value="Workouts"><option value="Library"><option value="Training mode"><option value="Progress"><option value="Settings"><option value="Admin"><option value="Auth"></datalist>
           <label class="field">Deploy version<input name="deploy_version" placeholder="Deploy #21"></label>
           <label class="field">Environment<input name="environment" value="production"></label>
-          <label class="field">GitHub issue URL<input name="issue_url" type="url" placeholder="https://github.com/…"></label>
+          
         </div>
       </div>
       <div id="update-fields" class="hidden">
@@ -243,18 +241,6 @@
       </div>
     </form>
   </div>
-</div>
-
-<div id="members-panel" class="modal-overlay hidden">
-  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="members-title">
-    <div class="modal-top">
-      <div><p class="eyebrow">Account</p><h2 id="members-title">QA membership</h2></div>
-    </div>
-    <p class="note">Approve verified accounts and assign roles. A member must sign in again after a change.</p>
-    <div id="members-list" class="members"></div>
-    <p id="members-error" class="error" role="status"></p>
-    <div class="modal-actions"><button id="members-close" type="button" class="btn btn-ink">Close</button></div>
-  </section>
 </div>
 
 <script src="/static/auth.js"></script>

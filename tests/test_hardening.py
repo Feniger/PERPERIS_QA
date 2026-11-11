@@ -1,26 +1,17 @@
 import os
-from pathlib import Path
-import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import app
-from database import Database
 import entrypoint
-from maintenance import prune
 
 
 class HardeningTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db=Database(sqlite_path=Path(self.tmp.name)/'hardening.sqlite3')
-        self.enterContext(patch.object(app,'DATABASE',self.db))
         self.enterContext(patch.object(app,'ADMIN_PASSWORD','synthetic-password'))
         self.enterContext(patch.object(app,'SECRET','synthetic-secret-'*4))
-        self.enterContext(patch.dict(os.environ,{'PERPERIS_QA_ENV':'local','PERPERIS_QA_AUTH_MODE':'local_shared','PERPERIS_QA_ATTACHMENT_BACKEND':'disabled'}))
+        self.enterContext(patch.dict(os.environ,{'PERPERIS_QA_ENV':'local','PERPERIS_QA_AUTH_MODE':'local_shared','PERPERIS_QA_TICKET_SOURCE':'memory'}))
         self.client=self.enterContext(TestClient(app.APP))
 
     def test_validation_never_echoes_passwords_or_tokens(self):
@@ -62,21 +53,6 @@ class HardeningTests(unittest.TestCase):
         self.assertNotIn('fonts.googleapis.com',self.client.get('/static/styles.css').text)
         self.assertEqual(response.headers['X-Content-Type-Options'],'nosniff')
         self.assertEqual(response.headers['Referrer-Policy'],'no-referrer')
-
-    def test_explicit_pruning_preserves_members_and_audit(self):
-        current=int(time.time())
-        with self.db.connection(write=True) as db:
-            db.execute("INSERT INTO qa_members(subject,email,display_name,state,created_at) VALUES('synthetic','synthetic@example.test','Synthetic','active',?)",(current,))
-            for token,expiry,revoked in [('expired',current-1,None),('revoked',current+100,current),('active',current+100,None)]:
-                db.execute('INSERT INTO qa_sessions(token_hash,subject,created_at,authenticated_at,expires_at,revoked_at) VALUES(?,?,?,?,?,?)',(token,'synthetic',current,current,expiry,revoked))
-            db.execute("INSERT INTO qa_security_events(target_subject,action,created_at) VALUES('synthetic','kept',?)",(current,))
-            db.execute("INSERT INTO qa_auth_throttle(bucket,window_start,attempts) VALUES('old',?,1)",(current-86401,))
-            db.execute("INSERT INTO qa_auth_throttle(bucket,window_start,attempts) VALUES('active',?,1)",(current,))
-        self.assertEqual(prune(self.db),{'sessions':2,'throttle_buckets':1})
-        with self.db.connection() as db:
-            self.assertEqual(db.execute('SELECT COUNT(*) AS n FROM qa_members').fetchone()['n'],1)
-            self.assertEqual(db.execute('SELECT COUNT(*) AS n FROM qa_security_events').fetchone()['n'],1)
-            self.assertEqual(db.execute('SELECT token_hash FROM qa_sessions').fetchone()['token_hash'],'active')
 
     def test_entrypoint_validates_resource_bounds(self):
         with patch.dict(os.environ,{'PORT':'8787','PERPERIS_QA_CONCURRENCY':'2'}):

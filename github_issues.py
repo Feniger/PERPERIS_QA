@@ -1,4 +1,4 @@
-"""Read-only GitHub issues adapter (QA milestone 1).
+"""GitHub issues adapter: tickets are GitHub issues (QA milestones 1 and 2).
 
 Tickets are GitHub issues labelled `qa` in one repository (default
 `krummb/kattens-pt`), read through the "PERPERIS QA" GitHub App. See
@@ -60,12 +60,12 @@ class Config:
 
 
 def config_from_env(env=os.environ) -> Config | None:
-    """None means the classic database ticket store (the default)."""
-    source = env.get('PERPERIS_QA_TICKET_SOURCE', 'database')
-    if source == 'database':
+    """GitHub App settings, or None for the in-memory local store (the default)."""
+    source = env.get('PERPERIS_QA_TICKET_SOURCE', 'memory')
+    if source == 'memory':
         return None
     if source != 'github':
-        raise RuntimeError('PERPERIS_QA_TICKET_SOURCE must be "database" or "github"')
+        raise RuntimeError('PERPERIS_QA_TICKET_SOURCE must be "github" (or "memory" for local development)')
     app_id = env.get('PERPERIS_QA_GITHUB_APP_ID', '')
     installation_id = env.get('PERPERIS_QA_GITHUB_INSTALLATION_ID', '')
     repo = env.get('PERPERIS_QA_GITHUB_REPO', 'krummb/kattens-pt')
@@ -271,6 +271,24 @@ def history(issue: dict, events: list[dict]) -> list[dict]:
     return out
 
 
+def unknown_round(testing_round: str, open_rounds: list[str]) -> InvalidReport:
+    known = ', '.join(open_rounds) or 'none yet'
+    return InvalidReport(f'Round "{testing_round.strip()}" is not an open testing round (open: {known})')
+
+
+def report_payload(*, milestone: int, title: str, description: str, severity: str, category: str, area: str,
+                   environment: str, deploy_version: str, reporter: str) -> dict:
+    """The GitHub "create issue" request for one QA report."""
+    if severity not in SEVERITIES:
+        raise InvalidReport('Choose a severity: critical, high, medium or low')
+    labels = ['qa', 'bug', f'sev:{severity}']
+    if area_label(area):
+        labels.append(area_label(area))
+    return {'title': neutralize(' '.join(title.split())), 'labels': labels, 'milestone': milestone,
+            'body': issue_body(description=description, environment=environment, deploy_version=deploy_version,
+                               category=category, area=area, reporter=reporter)}
+
+
 class GitHubIssues:
     def __init__(self, config: Config, *, transport: httpx.BaseTransport | None = None,
                  clock=time.time, cache_seconds: float = 60):
@@ -363,21 +381,12 @@ class GitHubIssues:
                 self.invalidate()  # a round opened in the last minute is not in the cache yet
         return None
 
-    def create_issue(self, *, title: str, description: str, severity: str, category: str, testing_round: str,
-                     area: str, environment: str, deploy_version: str, reporter: str) -> dict:
+    def create_issue(self, *, testing_round: str, **fields) -> dict:
         """Create one QA issue (label `qa`, `bug`, `sev:*`, optional `area:*`, round milestone)."""
-        if severity not in SEVERITIES:
-            raise InvalidReport('Choose a severity: critical, high, medium or low')
         number = self._milestone_number(testing_round.strip())
         if number is None:
-            known = ', '.join(self.open_rounds()) or 'none yet'
-            raise InvalidReport(f'Round "{testing_round.strip()}" is not an open testing round on GitHub (open: {known})')
-        labels = ['qa', 'bug', f'sev:{severity}']
-        if area_label(area):
-            labels.append(area_label(area))
-        payload = {'title': neutralize(' '.join(title.split())), 'labels': labels, 'milestone': number,
-                   'body': issue_body(description=description, environment=environment, deploy_version=deploy_version,
-                                      category=category, area=area, reporter=reporter)}
+            raise unknown_round(testing_round, self.open_rounds())
+        payload = report_payload(milestone=number, **fields)
         headers = {'Authorization': f'token {self._installation_token()}'}
         try:
             response = self._client.post(f'/repos/{self.config.repo}/issues', json=payload, headers=headers)
@@ -400,6 +409,57 @@ class GitHubIssues:
         return history(issue, data['events'][number])
 
 
-def from_env(env=os.environ) -> GitHubIssues | None:
+class MemoryIssues:
+    """Local development and tests only: an in-memory stand-in for the GitHub repository.
+
+    Reports go through the same request builder and issue mapping as GitHub, so
+    the UI behaves the same; everything is lost on restart. Staging refuses it
+    (runtime_guard requires PERPERIS_QA_TICKET_SOURCE=github).
+    """
+
+    def __init__(self, rounds=('R01',), clock=time.time):
+        self.clock = clock
+        self.config = Config(app_id='0', installation_id='0', private_key='', repo='local test data (not GitHub)')
+        opened = iso(clock() - 3600)
+        self._milestones = [{'number': n, 'state': 'open', 'title': title, 'created_at': opened}
+                            for n, title in enumerate(rounds, start=1)]
+        self._issues: dict[int, dict] = {}
+        self._lock = threading.Lock()
+
+    def close(self):
+        pass
+
+    def invalidate(self):
+        pass
+
+    def open_rounds(self) -> list[str]:
+        return [m['title'] for m in self._milestones if m['state'] == 'open']
+
+    def create_issue(self, *, testing_round: str, **fields) -> dict:
+        milestone = next((m for m in self._milestones if m['title'] == testing_round.strip() and m['state'] == 'open'), None)
+        if milestone is None:
+            raise unknown_round(testing_round, self.open_rounds())
+        payload = report_payload(milestone=milestone['number'], **fields)
+        with self._lock:
+            number = len(self._issues) + 1
+            now = iso(self.clock())
+            issue = {'number': number, 'title': payload['title'], 'state': 'open', 'state_reason': None,
+                     'labels': [{'name': name} for name in payload['labels']], 'milestone': {'title': milestone['title']},
+                     'body': payload['body'], 'created_at': now, 'updated_at': now,
+                     'user': {'login': 'perperis-qa[bot]'}, 'assignees': [], 'html_url': ''}
+            self._issues[number] = issue
+        return to_ticket(issue, [], testing_rounds(self._milestones))
+
+    def tickets(self) -> list[dict]:
+        with self._lock:
+            issues = sorted(self._issues.values(), key=lambda i: i['number'], reverse=True)
+        return [to_ticket(i, [], testing_rounds(self._milestones)) for i in issues]
+
+    def history(self, number: int) -> list[dict] | None:
+        issue = self._issues.get(number)
+        return history(issue, []) if issue else None
+
+
+def from_env(env=os.environ) -> GitHubIssues | MemoryIssues:
     config = config_from_env(env)
-    return GitHubIssues(config) if config else None
+    return GitHubIssues(config) if config else MemoryIssues()

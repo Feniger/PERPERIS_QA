@@ -37,7 +37,7 @@ def main():
     name='qa-image-smoke-'+secrets.token_hex(6)
     docker('run','-d','--name',name,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
         '--tmpfs','/tmp:rw,nosuid,nodev,size=64m','-p',f'127.0.0.1:{port}:8080',
-        '-e','PERPERIS_QA_DB=/tmp/qa.sqlite3','-e','PERPERIS_QA_PASSWORD','-e','PERPERIS_QA_SECRET',IMAGE,env=process_env)
+        '-e','PERPERIS_QA_PASSWORD','-e','PERPERIS_QA_SECRET',IMAGE,env=process_env)
     origin=f'http://127.0.0.1:{port}'
     try:
         for _ in range(100):
@@ -55,7 +55,7 @@ def main():
             assert response.status==201
         with urlopen(Request(origin+'/api/analytics',headers={'Cookie':cookie}),timeout=5) as response:
             assert json.load(response)['total']==1
-        print('Container smoke passed: blocked cloud startup and local HTTP/API on read-only, capability-dropped, non-root image.')
+        print('Container smoke passed: blocked cloud startup and local HTTP/API (in-memory tickets) on read-only, capability-dropped, non-root image.')
     finally:
         docker('rm','-f',name,check=False)
 

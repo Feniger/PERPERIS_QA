@@ -1,17 +1,34 @@
-"""Verified managed identity, application membership, and revocable QA sessions.
+"""Sign-in for PERPERIS QA without any QA storage (decision 4.2, lean rollout).
 
-No passwords, service account keys, raw session tokens or provider tokens are
-stored. No identity or infrastructure is provisioned by this module.
+- Identity Platform verifies the password and the email address.
+- Membership and role come from PERPERIS_QA_MEMBERS (`email=Role` pairs), kept
+  in the secret store, never in Git. Roles in tokens are ignored.
+- The session is a signed, expiring cookie. Rotating PERPERIS_QA_SECRET signs
+  everyone out; removing an email from the list takes effect on the next request.
+- Security events go to the application log (subjects only, no emails).
+
+No passwords, raw provider tokens or service account keys are stored or logged.
 """
+import base64
 from dataclasses import dataclass
 import hashlib
 import hmac
+import json
+import logging
 import os
-import secrets
+import threading
 import time
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
+
+ROLES = ('Admin', 'Developer', 'Tester')
+SESSION_SECONDS = 8 * 3600
+THROTTLE_WINDOW = 300
+THROTTLE_LIMIT = 20
+LOG = logging.getLogger('perperis_qa.security')
+MEMBERS_FORMAT = ('PERPERIS_QA_MEMBERS must be email=Role pairs separated by commas, '
+                  'with roles Admin, Developer or Tester and at least one Admin')
 
 
 @dataclass(frozen=True)
@@ -19,7 +36,7 @@ class Principal:
     name: str
     subject: str | None = None
     role: str = 'Admin'
-    session_hash: str | None = None
+    email: str | None = None
 
 
 def mode():
@@ -27,6 +44,23 @@ def mode():
     if value not in {'local_shared', 'identity'}:
         raise RuntimeError('Unknown authentication mode')
     return value
+
+
+def members(env=None) -> dict[str, str]:
+    """Verified email (lower case) -> role. Errors never echo the configured value."""
+    raw = (os.environ if env is None else env).get('PERPERIS_QA_MEMBERS', '')
+    result: dict[str, str] = {}
+    for item in raw.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        email, separator, role = item.rpartition('=')
+        email = email.strip().lower()
+        role = role.strip()
+        if not separator or '@' not in email or role not in ROLES or email in result:
+            raise RuntimeError(MEMBERS_FORMAT)
+        result[email] = role
+    return result
 
 
 def check_configuration():
@@ -39,7 +73,9 @@ def check_configuration():
                 parsed.query or parsed.fragment or parsed.username or parsed.password):
             raise RuntimeError('Identity mode requires a canonical HTTPS PERPERIS_QA_ORIGIN')
         if not os.getenv('PERPERIS_QA_IDENTITY_PROJECT') or len(os.getenv('PERPERIS_QA_SECRET', '')) < 32:
-            raise RuntimeError('Identity project and private 32+ character rate-limit secret are required')
+            raise RuntimeError('Identity project and private 32+ character session secret are required')
+        if 'Admin' not in members().values():
+            raise RuntimeError(MEMBERS_FORMAT)
 
 
 def require_origin(request):
@@ -91,95 +127,85 @@ def verified_claims(token):
     if (not isinstance(auth_time, (int, float)) or isinstance(auth_time, bool) or
             not time.time() - 300 <= auth_time <= time.time() + 30):
         raise HTTPException(401, 'Sign in again before creating a QA session')
-    # Roles in the token/client are deliberately ignored; DB membership is authoritative.
+    # Roles in the token/client are deliberately ignored; the member list is authoritative.
     return subject, email, str(claims.get('name') or email)[:100], int(auth_time)
 
 
-def lock_members(db):
-    if db.backend == 'postgres':
-        db.execute('SELECT pg_advisory_xact_lock(728194003)')
+def security_event(actor, target, action):
+    LOG.info(json.dumps({'event': 'qa_security', 'actor': actor, 'target': target, 'action': action}))
 
 
-def authorize_member(db, user):
-    if user.subject is None:
-        return  # Local-only shared prototype; cloud startup remains blocked.
-    lock_members(db)
-    row = db.execute('SELECT role,state FROM qa_members WHERE subject=?', (user.subject,)).fetchone()
-    if row is None or row['state'] != 'active' or row['role'] != user.role:
-        raise HTTPException(403, 'Membership changed; sign in again')
-    if user.session_hash and db.execute('SELECT token_hash FROM qa_sessions WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?', (user.session_hash, int(time.time()))).fetchone() is None:
-        raise HTTPException(401, 'Sign in again')
+_throttle_lock = threading.Lock()
+_attempts: dict[str, tuple[float, int]] = {}
 
 
-def security_event(db, actor, target, action):
-    db.execute('INSERT INTO qa_security_events(actor_subject,target_subject,action,created_at) VALUES(?,?,?,?)',
-               (actor, target, action, int(time.time())))
-
-
-def throttle(database, request):
-    """Shared fixed-window throttle, persisted across instances/restarts; HMAC IP only."""
+def throttle(request):
+    """In-memory fixed window per instance (Identity Platform has its own limits too); HMAC IP only."""
     address = request.client.host if request.client else 'unknown'
     bucket = hmac.new(os.environ['PERPERIS_QA_SECRET'].encode(), address.encode(), hashlib.sha256).hexdigest()
-    current = int(time.time())
-    with database.connection(write=True) as db:
-        # Upsert is atomic for concurrent new/existing buckets on both backends.
-        row = db.execute('''INSERT INTO qa_auth_throttle(bucket,window_start,attempts) VALUES(?,?,1)
-            ON CONFLICT(bucket) DO UPDATE SET
-                attempts=CASE WHEN qa_auth_throttle.window_start<=? THEN 1 ELSE qa_auth_throttle.attempts+1 END,
-                window_start=CASE WHEN qa_auth_throttle.window_start<=? THEN ? ELSE qa_auth_throttle.window_start END
-            RETURNING attempts''', (bucket, current, current-300, current-300, current)).fetchone()
-        limited = row['attempts'] > 20
+    now = time.time()
+    with _throttle_lock:
+        for key, (start, _) in list(_attempts.items()):
+            if start <= now - THROTTLE_WINDOW:
+                del _attempts[key]
+        start, count = _attempts.get(bucket, (now, 0))
+        _attempts[bucket] = (start, count + 1)
+        limited = count + 1 > THROTTLE_LIMIT
     if limited:
-        raise HTTPException(429, 'Too many sign-in attempts; try again later', headers={'Retry-After': '300'})
+        raise HTTPException(429, 'Too many sign-in attempts; try again later', headers={'Retry-After': str(THROTTLE_WINDOW)})
 
 
-def exchange(database, token):
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+
+def _signature(payload: str) -> str:
+    return hmac.new(os.environ['PERPERIS_QA_SECRET'].encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+def issue_session(subject, email, name, auth_time, now=None):
+    now = int(time.time() if now is None else now)
+    payload = _b64(json.dumps({'v': 1, 'sub': subject, 'email': email, 'name': name, 'auth': auth_time,
+                               'exp': now + SESSION_SECONDS}, separators=(',', ':')).encode())
+    return payload + '.' + _signature(payload)
+
+
+def exchange(token):
     subject, email, name, auth_time = verified_claims(token)
-    current = int(time.time())
-    pending = False
-    with database.connection(write=True) as db:
-        lock_members(db)
-        row = db.execute('SELECT * FROM qa_members WHERE subject=?' + db.lock_clause, (subject,)).fetchone()
-        if row is None:
-            db.execute("INSERT INTO qa_members(subject,email,display_name,created_at) VALUES(?,?,?,?)", (subject, email, name, current))
-            security_event(db, subject, subject, 'membership_requested')
-            pending = True
-        elif row['state'] != 'active':
-            pending = True
-        else:
-            raw = secrets.token_urlsafe(32)
-            digest = hashlib.sha256(raw.encode()).hexdigest()
-            # A fresh sign-in rotates all previous sessions for this account.
-            db.execute('UPDATE qa_sessions SET revoked_at=? WHERE subject=? AND revoked_at IS NULL', (current, subject))
-            db.execute('INSERT INTO qa_sessions(token_hash,subject,created_at,authenticated_at,expires_at) VALUES(?,?,?,?,?)',
-                       (digest, subject, current, auth_time, current+3600))
-            security_event(db, subject, subject, 'session_created')
-    # Denied membership must still commit the pending request above.
-    if pending:
-        raise HTTPException(403, 'QA membership is pending approval or inactive')
-    return raw
+    if members().get(email.lower()) is None:
+        security_event(subject, subject, 'access_denied_not_listed')
+        raise HTTPException(403, 'Your email is not on the QA member list. Ask the owner to add it.')
+    security_event(subject, subject, 'session_created')
+    return issue_session(subject, email, name, auth_time)
 
 
-def current(database, raw):
-    if not raw or len(raw) > 100:
+def current(raw):
+    if not raw or len(raw) > 2000 or raw.count('.') != 1:
         raise HTTPException(401, 'Sign in required')
-    digest = hashlib.sha256(raw.encode()).hexdigest()
-    with database.connection() as db:
-        row = db.execute('''SELECT m.*,s.token_hash,s.authenticated_at FROM qa_sessions s JOIN qa_members m ON m.subject=s.subject
-            WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND m.state='active' ''',
-                         (digest, int(time.time()))).fetchone()
-    if row is None:
+    payload, signature = raw.split('.')
+    if not hmac.compare_digest(signature.encode(), _signature(payload).encode()):
         raise HTTPException(401, 'Sign in required')
-    verify_provider_session(row['subject'], row['authenticated_at'])
-    return Principal(row['display_name'], row['subject'], row['role'], digest)
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+    except ValueError:
+        raise HTTPException(401, 'Sign in required') from None
+    if (not isinstance(data, dict) or data.get('v') != 1 or not isinstance(data.get('exp'), int)
+            or data['exp'] <= time.time() or not isinstance(data.get('email'), str)):
+        raise HTTPException(401, 'Sign in required')
+    role = members().get(data['email'].lower())
+    if role is None:
+        raise HTTPException(401, 'Sign in required')
+    verify_provider_session(data.get('sub'), data.get('auth'))
+    return Principal(str(data.get('name') or data['email'])[:100], data.get('sub'), role, data['email'])
 
 
 def verify_provider_session(subject, authenticated_at):
     # Provider disable/password-reset/revocation must invalidate existing sessions,
     # not just block the next exchange. Fail closed on provider/network errors.
-    import firebase_admin
     from firebase_admin import auth
     try:
+        if not isinstance(subject, str) or not isinstance(authenticated_at, int):
+            raise ValueError('Malformed session')
         user = auth.get_user(subject, app=provider_app())
         if user.disabled or not user.email_verified or user.tokens_valid_after_timestamp > authenticated_at * 1000:
             raise ValueError('Revoked identity')
@@ -190,61 +216,3 @@ def verify_provider_session(subject, authenticated_at):
 def require_role(user, roles):
     if user.role not in roles:
         raise HTTPException(403, 'Your role does not permit this action')
-
-
-def change_member(database, actor, subject, role, state):
-    require_role(actor, {'Admin'})
-    with database.connection(write=True) as db:
-        lock_members(db)
-        # Recheck actor under the same membership lock as a role/disable update.
-        active = db.execute('SELECT role,state FROM qa_members WHERE subject=?', (actor.subject,)).fetchone()
-        if active is None or active['role'] != 'Admin' or active['state'] != 'active':
-            raise HTTPException(403, 'Active Admin membership required')
-        target = db.execute('SELECT * FROM qa_members WHERE subject=?' + db.lock_clause, (subject,)).fetchone()
-        if target is None:
-            raise HTTPException(404, 'Member not found')
-        if target['role'] == 'Admin' and target['state'] == 'active' and (role != 'Admin' or state != 'active'):
-            count = db.execute("SELECT COUNT(*) AS n FROM qa_members WHERE role='Admin' AND state='active'").fetchone()['n']
-            if count <= 1:
-                raise HTTPException(409, 'The final active Admin cannot be removed')
-        db.execute('UPDATE qa_members SET role=?,state=? WHERE subject=?', (role, state, subject))
-        db.execute('UPDATE qa_sessions SET revoked_at=? WHERE subject=? AND revoked_at IS NULL', (int(time.time()), subject))
-        security_event(db, actor.subject, subject, f'membership:{role}:{state}')
-
-
-def bootstrap(database, subject):
-    """Explicit private operator action, only for an already verified pending member."""
-    with database.connection(write=True) as db:
-        lock_members(db)
-        if db.execute("SELECT COUNT(*) AS n FROM qa_members WHERE role='Admin' AND state='active'").fetchone()['n']:
-            raise ValueError('An active Admin already exists')
-        member = db.execute('SELECT state FROM qa_members WHERE subject=?', (subject,)).fetchone()
-        if member is None or member['state'] != 'pending':
-            raise ValueError('Bootstrap requires an existing verified pending membership')
-        db.execute("UPDATE qa_members SET role='Admin',state='active' WHERE subject=?", (subject,))
-        security_event(db, None, subject, 'admin_bootstrapped_by_operator')
-
-
-def main():
-    import argparse
-    from database import from_env
-    parser = argparse.ArgumentParser(description='One-time private QA Admin bootstrap (no provisioning).')
-    parser.add_argument('--subject', required=True)
-    parser.add_argument('--apply', action='store_true')
-    args = parser.parse_args()
-    if not args.apply:
-        parser.error('--apply is required to change membership')
-    db = from_env()
-    try:
-        db.start()
-        db.check_schema()
-        bootstrap(db, args.subject)
-        print('Admin bootstrap completed.')
-    except Exception:
-        parser.exit(1, 'Admin bootstrap failed; verify private membership and configuration.\n')
-    finally:
-        db.close()
-
-
-if __name__ == '__main__':
-    main()
