@@ -91,6 +91,7 @@ def main():
                         admin.locator('#new-ticket').click()
                         expect(admin.locator('[name=reporter]')).to_have_value('admin')
                         assert admin.locator('[name=reporter]').get_attribute('readonly') is not None
+                        expect(admin.locator('[name=title]')).to_be_focused()  # the dialog focuses the title after 20 ms
                         admin.locator('[name=title]').fill('Synthetic HTTPS member ticket')
                         admin.locator('[name=description]').fill('Expected a list, saw nothing')
                         admin.locator('#form-submit').click()
