@@ -1,8 +1,15 @@
 # QA-CLOUD-06 — private staging on Cloud Run with a free Neon database
 
-Status: proposed. Nothing in this change creates cloud resources by itself. It adds
-the validated startup checks, a one-time setup script, a manual deploy workflow and
-this guide. Production stays blocked.
+Status: merged as code (PR #7, 2026-11-11), **never set up or deployed**, and
+**needs revision** before use. It was written for the self-hosted ticket database;
+on 2026-11-11 PERPERIS QA moved to a GitHub issues front end with no QA database
+(see [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md)), so the Neon database, the
+migration step and the database grants below will be removed, and the GitHub App
+key added as a secret, in milestone 4 of that plan. Do not run `setup.sh` as-is.
+
+Nothing in this change creates cloud resources by itself. It adds the validated
+startup checks, a one-time setup script, a manual deploy workflow and this guide.
+Production stays blocked.
 
 This follows `docs/RELEASE_PLAN.md` with one deliberate change: **Neon's free
 PostgreSQL replaces Cloud SQL**, to keep staging at about $0 a month.

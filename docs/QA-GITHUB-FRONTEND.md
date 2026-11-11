@@ -1,0 +1,142 @@
+# PERPERIS QA as a GitHub issues front end
+
+Decided by the owner and the creator on 2026-11-11. This supersedes the staging
+and ticket-database plan in `docs/RELEASE_PLAN.md`, which was written for the
+old self-hosted ticket design and is kept only as history (see the note at its
+top).
+
+## 1. The decision
+
+**GitHub issues in `krummb/kattens-pt` are the single source of truth for
+bugs.** PERPERIS QA becomes a front end: its own design and login, but every
+ticket is a GitHub issue. The app's own ticket database (`tickets`,
+`ticket_events`, `ticket_changes` and the matching endpoints/queries) is
+replaced by a GitHub adapter.
+
+QA stays separate from the training app: no access to its database, Google
+project, code or secrets. It touches only issues — and, per the screenshot
+decision below, nothing else — through a narrowly scoped GitHub App.
+
+Moving QA's own hosting to the creator's accounts was considered and set
+aside. Issues live in `kattens-pt`; the QA code stays here, in
+`Feniger/PERPERIS_QA`.
+
+## 2. Target architecture
+
+```
+   CREATOR / TESTERS
+          │  report · triage · verify · reopen
+          ▼
+   PERPERIS QA (own design + login)
+          │        ▲
+   writes │        │ reads + webhooks
+          ▼        │
+   GITHUB ISSUES (krummb/kattens-pt)
+       ▲                    ▲
+       │ "Fixes #123"       │ "Live in Deploy #24"
+       │ merged → closed    │ → deployed label + comment
+   PULL REQUESTS        DEPLOY WORKFLOW
+```
+
+- **GitHub App "PERPERIS QA"**, registered by the owner under `krummb`,
+  installed **only on `kattens-pt`**. Permissions: Issues read/write, Metadata
+  read. No Contents, code, workflow, settings or secrets access — see the
+  screenshot decision below for why Contents isn't needed. The private key is
+  stored as a QA secret (never in Git or chat); the server exchanges it for
+  short-lived installation tokens. Actions appear as `perperis-qa[bot]`; the
+  acting person is written into the issue/comment text. Webhooks (`issues`,
+  `issue_comment`, `pull_request`) keep the QA view current.
+- Testers and the creator log in to the QA app itself (Identity Platform
+  login, verified email, admin approval, roles Admin/Developer/Tester). **No
+  GitHub account is needed** to report or verify a bug.
+
+## 3. Issue conventions
+
+| QA concept | GitHub |
+|---|---|
+| Ticket | Issue (label `qa`, plus `bug` or `task`) |
+| Testing round R05 | Milestone `R05` |
+| Severity | Labels `sev:critical` / `sev:high` / `sev:medium` / `sev:low` |
+| Area | Labels `area:<name>` (e.g. `area:library`, `area:today`) |
+| Status | Open + `status:triaged` / `status:in-progress` / `status:fixed` / `status:deployed`; closed = verified; reopened = open again with a comment |
+| Steps, expected/actual, environment, deploy # | Fixed headings in the issue body |
+| Reporter / verifier | Line "Reported by `<name>` via PERPERIS QA" / "Verified by `<name>`" |
+| Discussion, resolution notes | Issue comments |
+
+Lifecycle: QA "New bug" creates the issue → triage in QA sets labels → a PR
+merges referencing it → `deploy-cloud-run` in `kattens-pt` adds
+`status:deployed` and comments "Live in Deploy #N" for issues fixed in that
+deploy → the creator presses **Verify** in QA (closes the issue) or
+**Reopen**.
+
+Analytics (found/fixed/verified per round, backlog, crossover) are computed
+from issue timeline events (created, labeled, closed, reopened): deterministic,
+no stored counters, matching the existing dashboard's "no fictional KPI data"
+rule.
+
+## 4. Settled decisions (2026-11-11)
+
+1. **Screenshots stay in QA's own private bucket.** The existing
+   `attachments.py` (local/GCS backends, two-phase pending/ready, quotas) is
+   kept as-is. A QA ticket page links back from the GitHub issue (a URL in the
+   issue body), but the images themselves are never committed to `kattens-pt`.
+   This is why the GitHub App needs no Contents permission.
+2. **No QA database.** Members, sessions, login throttling and security
+   events move off PostgreSQL entirely: roles become Identity Platform custom
+   claims on the user (Admin/Developer/Tester), and sessions become stateless
+   — the server verifies the Identity Platform ID token on each request
+   instead of looking up a session row. Login throttling and security-event
+   logging move to structured application logs (Cloud Logging once staged)
+   rather than a database table. This removes `database.py`'s identity/session
+   tables and the Neon dependency entirely; the GitHub adapter needs no
+   database either, since issues are the store of record. The detailed
+   session/throttling design is an implementation question for the milestone
+   that rewrites `identity.py`, not finalized here.
+3. **Existing ticket data is test/fixture data only** — PERPERIS QA was never
+   deployed publicly (staging was never completed), so no real tickets exist
+   outside local development. The ticket tables are dropped outright once the
+   GitHub adapter lands; no import/migration step is needed.
+4. **"Fixes #N" auto-close is kept as normal GitHub behavior.** PRs use the
+   standard closing keywords and GitHub closes the issue on merge. PERPERIS QA
+   treats an issue that is **closed by a PR but not yet labeled
+   `status:deployed`+verified** as still "fixed" in its own view (not
+   "resolved/verified") until the creator explicitly presses **Verify** —
+   which, for an already-closed issue, just confirms/labels it rather than
+   closing it again. This keeps the common-case GitHub workflow (write
+   "Fixes #N", merge, done) unchanged for contributors, at the cost of QA
+   needing to read "closed, un-deployed, unverified" as its own distinct
+   state rather than relying on closed == verified.
+5. **"Live in Deploy #N" lives in `kattens-pt`'s `deploy-cloud-run`
+   workflow**, as a small added step using the workflow's own token (same
+   repo, no extra secret, normal PR review there).
+
+## 5. Suggested milestones
+
+Each is its own PR in `Feniger/PERPERIS_QA` unless noted. One milestone per
+PR; nothing merges here without the owner's explicit OK.
+
+0. **Decisions + docs** (this document; also a decision entry in
+   `kattens-pt`'s `docs/control/DECISION-LOG.md`). Fix the stale README and
+   this release plan's framing. Branch cleanup (merged Cloud-Foundation
+   branches) is owner/creator housekeeping, not part of this PR.
+1. **GitHub adapter, read-only**: replace ticket reads and analytics with
+   issue reads (labels, milestones, timeline). Dashboard and ticket list show
+   real `kattens-pt` issues labeled `qa`. Owner registers and installs the
+   GitHub App; labels and milestones get created in `kattens-pt`.
+2. **Report**: "New bug" creates issues (title, body template, labels,
+   milestone, reporter line); screenshots keep using the existing private
+   bucket per decision 4.1.
+3. **Close the loop**: Triage / Verify / Reopen actions in QA; a separate PR
+   in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
+   `deploy-cloud-run`; webhooks for live updates.
+4. **Staging**: revise QA-CLOUD-06 for the no-database design (GitHub App key
+   as the only real secret), then deploy after owner approval (own Google
+   project, budget alert, public vs. locked sign-in decided).
+5. **Later**: an "Ask QA" chat/AI feature on the same adapter — needs an AI
+   provider key, a separate decision, not started.
+
+Acceptance for each milestone: QA CI green (plus new adapter tests against
+recorded/mocked GitHub responses — never against the real repo in CI), no
+secrets in Git, statistics derived only from GitHub data, existing
+login/roles/security behavior preserved or deliberately and visibly replaced
+per decision 4.2.
