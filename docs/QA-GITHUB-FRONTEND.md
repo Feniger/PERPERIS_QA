@@ -113,7 +113,7 @@ rule.
 ## 5. Suggested milestones
 
 Each is its own PR in `Feniger/PERPERIS_QA` unless noted. One milestone per
-PR; nothing merges here without the owner's explicit OK.
+PR; merging follows the rule in section 6.
 
 0. **Decisions + docs** (this document; also a decision entry in
    `kattens-pt`'s `docs/control/DECISION-LOG.md`). Fix the stale README and
@@ -140,3 +140,20 @@ recorded/mocked GitHub responses — never against the real repo in CI), no
 secrets in Git, statistics derived only from GitHub data, existing
 login/roles/security behavior preserved or deliberately and visibly replaced
 per decision 4.2.
+
+## 6. Merge and deploy rule (owner decision, 2026-11-11)
+
+- **Claude Code may merge its own pull requests in this repository as soon as
+  all CI checks are green**, unless the owner or the creator has objected on
+  the PR (a "request changes" review or an objecting comment). It leaves a
+  short comment on the PR saying it merged under this rule. The creator can
+  review after the merge and ask for a follow-up or a revert.
+- Still need the owner's **explicit OK every time**: any deploy (staging or
+  production), creating or changing cloud infrastructure, changing the GitHub
+  App's permissions or installation, adding or rotating secrets, and anything
+  irreversible (deleting data, history or resources).
+- Pull requests from anyone else (including the creator's own agents) are
+  merged by their author or the owner, not by Claude Code.
+- In `krummb/kattens-pt` the existing rules apply (every change through a PR;
+  merging to `main` deploys automatically; Claude Code asks before merging
+  feature, product or deploy-workflow changes).
