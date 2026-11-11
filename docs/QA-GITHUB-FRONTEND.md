@@ -289,7 +289,8 @@ PR; merging follows the rule in section 6.
    actions in QA and the webhook endpoint (both described above); a separate
    PR in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
    `deploy-cloud-run`.
-4. **Staging**: revise QA-CLOUD-06 for the no-storage design (Cloud Run,
+4. **Staging** (setup and deploy workflow rewritten 2026-11-11, see
+   [QA-CLOUD-06-STAGING.md](QA-CLOUD-06-STAGING.md)): revise QA-CLOUD-06 for the no-storage design (Cloud Run,
    Identity Platform, secrets: GitHub App key, session secret, member list;
    no database, no bucket), then deploy after owner approval (own Google
    project, budget alert, public vs. locked sign-in decided).

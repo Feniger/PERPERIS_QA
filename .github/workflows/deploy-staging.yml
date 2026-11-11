@@ -1,16 +1,13 @@
-# PERPERIS QA — deploy private staging (QA-CLOUD-06, Neon variant).
-# Manual only: Actions > "Deploy staging" > Run workflow. Never runs on pull requests.
-# Uses keyless GitHub sign-in to Google (no service-account key). All settings come
-# from the GitHub environment "staging"; see docs/QA-CLOUD-06-STAGING.md.
+# PERPERIS QA — deploy private staging (milestone 4: GitHub front end, no QA storage).
+# Manual only: Actions > "Deploy staging" > Run workflow (from main). Never runs on PRs.
+# Keyless sign-in to Google: the identity pool only trusts THIS workflow file on main
+# of Feniger/PERPERIS_QA. Every secret lives in Google Secret Manager and is read by
+# Cloud Run at runtime; GitHub holds no QA secret. Setup: infra/staging/setup.sh and
+# docs/QA-CLOUD-06-STAGING.md. The identifiers below are not secrets.
 name: Deploy staging
 
 on:
   workflow_dispatch:
-    inputs:
-      run_migrations:
-        description: Apply database migrations before deploying
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -20,49 +17,47 @@ concurrency:
   group: qa-staging-deploy
   cancel-in-progress: false
 
+env:
+  PROJECT_ID: perperis-qa-staging
+  REGION: europe-north1
+  SERVICE: perperis-qa-staging
+  ORIGIN: https://perperis-qa-staging-982639404002.europe-north1.run.app
+  WIF_PROVIDER: projects/982639404002/locations/global/workloadIdentityPools/github/providers/perperis-qa
+  DEPLOYER_SA: qa-deployer@perperis-qa-staging.iam.gserviceaccount.com
+  RUNTIME_SA: qa-runtime@perperis-qa-staging.iam.gserviceaccount.com
+  IMAGE: europe-north1-docker.pkg.dev/perperis-qa-staging/perperis-qa/app
+  # GitHub App "PERPERIS QA" (installed on krummb/kattens-pt only).
+  GITHUB_APP_ID: '5711212'
+  GITHUB_INSTALLATION_ID: '180847731'
+  TICKETS_REPO: krummb/kattens-pt
+
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: staging
     timeout-minutes: 30
-    env:
-      REGION: ${{ vars.GCP_REGION || 'europe-north1' }}
-      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      SERVICE: ${{ vars.QA_SERVICE || 'perperis-qa-staging' }}
-      IMAGE: ${{ vars.GCP_REGION || 'europe-north1' }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/perperis-qa/app
     steps:
-      - name: Check required settings
-        env:
-          WIF: ${{ vars.GCP_WIF_PROVIDER }}
-          DEPLOYER: ${{ vars.GCP_DEPLOYER_SA }}
-          RUNTIME: ${{ vars.GCP_RUNTIME_SA }}
-          BUCKET: ${{ vars.QA_BUCKET }}
-          ORIGIN: ${{ vars.QA_ORIGIN }}
-          WEB_KEY: ${{ vars.QA_IDENTITY_WEB_API_KEY }}
-          HAS_MIGRATION_URL: ${{ secrets.QA_MIGRATION_DATABASE_URL != '' }}
-        run: |
-          missing=()
-          for name in PROJECT_ID WIF DEPLOYER RUNTIME BUCKET ORIGIN WEB_KEY; do
-            [ -n "${!name}" ] || missing+=("$name")
-          done
-          if [ "${{ inputs.run_migrations }}" = "true" ] && [ "$HAS_MIGRATION_URL" != "true" ]; then
-            missing+=("secret QA_MIGRATION_DATABASE_URL")
-          fi
-          case "$ORIGIN" in https://*.run.app) ;; *) missing+=("QA_ORIGIN must be the https://...run.app address from setup.sh");; esac
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing staging settings: ${missing[*]}. See docs/QA-CLOUD-06-STAGING.md."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
 
       - name: Sign in to Google Cloud (keyless)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check every secret has a value (values are never read)
+        run: |
+          missing=()
+          for name in perperis-qa-secret perperis-qa-members perperis-qa-github-key perperis-qa-web-api-key perperis-qa-webhook-secret; do
+            versions="$(gcloud secrets versions list "$name" --project "$PROJECT_ID" --filter='state=ENABLED' --limit=1 --format='value(name)' 2>/dev/null || true)"
+            [ -n "$versions" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::These secrets have no value yet: ${missing[*]}. Add them in Secret Manager (docs/QA-CLOUD-06-STAGING.md), then run again."
+            exit 1
+          fi
 
       - name: Build and push the image
         run: |
@@ -73,53 +68,27 @@ jobs:
           echo "DIGEST=$digest" >> "$GITHUB_ENV"
           echo "Image: $digest"
 
-      - name: Apply database migrations (separate migration role)
-        if: ${{ inputs.run_migrations }}
-        env:
-          PERPERIS_QA_DATABASE_URL: ${{ secrets.QA_MIGRATION_DATABASE_URL }}
-        run: |
-          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
-            -e PERPERIS_QA_DATABASE_URL "$IMAGE:$GITHUB_SHA" python -m database migrate --apply
-
-      - name: Grant the app's database role least-privilege access
-        if: ${{ inputs.run_migrations }}
-        env:
-          PERPERIS_QA_DATABASE_URL: ${{ secrets.QA_MIGRATION_DATABASE_URL }}
-        run: |
-          # One transaction; statements split on ';' (the SQL file keeps comments free of them).
-          docker run --rm -i --read-only --cap-drop ALL --security-opt no-new-privileges \
-            -e PERPERIS_QA_DATABASE_URL "$IMAGE:$GITHUB_SHA" python -c '
-          import os, sys, psycopg
-          sql = sys.stdin.read()
-          statements = [s.strip() for s in sql.split(";")]
-          statements = [s for s in statements if s and not all(l.strip().startswith("--") or not l.strip() for l in s.splitlines())]
-          try:
-              with psycopg.connect(os.environ["PERPERIS_QA_DATABASE_URL"], connect_timeout=15) as conn:
-                  for s in statements:
-                      conn.execute(s)
-              print(f"Applied {len(statements)} grant statements.")
-          except Exception as exc:
-              # Never print the exception text: drivers may include connection details.
-              print("Granting failed: check that the qa_runtime role exists in Neon. (" + type(exc).__name__ + ")")
-              sys.exit(1)
-          ' < infra/staging/runtime-grants.sql
-
       - name: Deploy to Cloud Run
-        env:
-          RUNTIME: ${{ vars.GCP_RUNTIME_SA }}
-          BUCKET: ${{ vars.QA_BUCKET }}
-          ORIGIN: ${{ vars.QA_ORIGIN }}
-          WEB_KEY: ${{ vars.QA_IDENTITY_WEB_API_KEY }}
-          ACCESS: ${{ vars.QA_PUBLIC_URL == 'false' && '--no-allow-unauthenticated' || '--allow-unauthenticated' }}
         run: |
           gcloud run deploy "$SERVICE" \
             --project "$PROJECT_ID" --region "$REGION" --image "$DIGEST" \
-            --service-account "$RUNTIME" \
-            --min-instances 0 --max-instances 2 --concurrency 4 --cpu 1 --memory 1Gi \
-            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_IDENTITY_WEB_API_KEY=$WEB_KEY,PERPERIS_QA_ATTACHMENT_BACKEND=gcs,PERPERIS_QA_ATTACHMENT_BUCKET=$BUCKET,PERPERIS_QA_CONCURRENCY=4,PERPERIS_QA_POOL_SIZE=3" \
-            --set-secrets "PERPERIS_QA_DATABASE_URL=perperis-qa-database-url:latest,PERPERIS_QA_SECRET=perperis-qa-secret:latest" \
-            $ACCESS
+            --service-account "$RUNTIME_SA" \
+            --min-instances 0 --max-instances 2 --concurrency 4 --cpu 1 --memory 512Mi \
+            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_TICKET_SOURCE=github,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_GITHUB_APP_ID=$GITHUB_APP_ID,PERPERIS_QA_GITHUB_INSTALLATION_ID=$GITHUB_INSTALLATION_ID,PERPERIS_QA_GITHUB_REPO=$TICKETS_REPO,PERPERIS_QA_CONCURRENCY=4" \
+            --set-secrets "PERPERIS_QA_SECRET=perperis-qa-secret:latest,PERPERIS_QA_MEMBERS=perperis-qa-members:latest,PERPERIS_QA_GITHUB_PRIVATE_KEY=perperis-qa-github-key:latest,PERPERIS_QA_IDENTITY_WEB_API_KEY=perperis-qa-web-api-key:latest,PERPERIS_QA_GITHUB_WEBHOOK_SECRET=perperis-qa-webhook-secret:latest" \
+            --allow-unauthenticated
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"
           echo "Deployed: $url"
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 12); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$ORIGIN/api/auth/config" || true)"
+            echo "attempt $i: /api/auth/config -> HTTP $code"
+            [ "$code" = "200" ] && break
+            sleep 5
+          done
+          [ "$code" = "200" ] || { echo "::error::Staging did not answer; check the Cloud Run logs."; exit 1; }
+          curl -s "$ORIGIN/api/auth/config" | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["mode"]=="identity" and c["tickets_source"]=="github", c; print("Config OK:", c["mode"], c["tickets_source"], c["tickets_repo"])'
           echo "### Staging deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "Open **$ORIGIN** (sign in with a verified, approved account)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Open **$ORIGIN**. Only emails on the member list can sign in." >> "$GITHUB_STEP_SUMMARY"
