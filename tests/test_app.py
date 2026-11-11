@@ -116,6 +116,23 @@ class QATests(unittest.TestCase):
                 self.assertEqual(ignored.status_code, 204)
             self.assertEqual(calls, [1])
 
+    def test_app_icon_and_manifest_are_served_from_a_fixed_list(self):
+        page = self.client.get('/').text
+        for href in ('/static/icon-180.png', '/static/icon-32.png', '/static/manifest.webmanifest'):
+            self.assertIn(href, page)
+        for name, kind in (('icon.svg', 'image/svg+xml'), ('icon-16.png', 'image/png'), ('icon-32.png', 'image/png'),
+                           ('icon-180.png', 'image/png'), ('icon-192.png', 'image/png'), ('icon-512.png', 'image/png'),
+                           ('manifest.webmanifest', 'application/manifest+json')):
+            response = self.client.get(f'/static/{name}')
+            self.assertEqual(response.status_code, 200, name)
+            self.assertTrue(response.headers['content-type'].startswith(kind), name)
+            self.assertEqual(response.headers['x-content-type-options'], 'nosniff')
+        manifest = self.client.get('/static/manifest.webmanifest').json()
+        self.assertEqual((manifest['name'], manifest['short_name']), ('PERPERIS QA', 'QA'))
+        self.assertTrue(all(self.client.get(icon['src']).status_code == 200 for icon in manifest['icons']))
+        self.assertEqual(self.client.get('/static/index.html').status_code, 404)
+        self.assertEqual(self.client.get('/static/..%2Fapp.py').status_code, 404)
+
     def test_store_starts_empty_on_each_start(self):
         self.login()
         self.client.post('/api/tickets', headers=HEADERS, json={'title': 'Kept only in memory', 'reporter': 'X', 'testing_round': 'R01', 'description': 'Expected it to work, it did not'})

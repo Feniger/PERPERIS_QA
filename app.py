@@ -136,11 +136,25 @@ class TicketUpdate(BaseModel):
 def index():
     return FileResponse(ROOT/'static'/'index.html',media_type='text/html')
 
+# Fixed allowlist: nothing else under static/ is ever served.
+STATIC_FILES = {
+    'app.js': None, 'styles.css': None, 'auth.js': None, 'attachments.js': None,
+    'icon.svg': 'image/svg+xml', 'icon-16.png': 'image/png', 'icon-32.png': 'image/png',
+    'icon-180.png': 'image/png', 'icon-192.png': 'image/png', 'icon-512.png': 'image/png',
+    'manifest.webmanifest': 'application/manifest+json',
+}
+# Icons and the manifest change rarely; let browsers and home screens keep them for a day.
+CACHEABLE = {name for name, kind in STATIC_FILES.items() if kind}
+
+
 @APP.get('/static/{filename}')
 def asset(filename: str):
-    if filename not in ('app.js','styles.css','auth.js','attachments.js'):
+    if filename not in STATIC_FILES:
         raise HTTPException(404)
-    return FileResponse(ROOT/'static'/filename)
+    response = FileResponse(ROOT/'static'/filename, media_type=STATIC_FILES[filename])
+    if filename in CACHEABLE:
+        response.headers['Cache-Control'] = 'public, max-age=86400'
+    return response
 
 @APP.post('/api/login')
 def login(payload: SignIn,response:Response):
