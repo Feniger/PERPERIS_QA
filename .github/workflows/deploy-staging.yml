@@ -30,6 +30,7 @@ env:
   GITHUB_APP_ID: '5711212'
   GITHUB_INSTALLATION_ID: '180847731'
   TICKETS_REPO: krummb/kattens-pt
+  SCREENSHOT_BUCKET: perperis-qa-staging-screenshots
 
 jobs:
   deploy:
@@ -74,7 +75,7 @@ jobs:
             --project "$PROJECT_ID" --region "$REGION" --image "$DIGEST" \
             --service-account "$RUNTIME_SA" \
             --min-instances 0 --max-instances 2 --concurrency 16 --cpu 1 --memory 512Mi \
-            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_TICKET_SOURCE=github,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_GITHUB_APP_ID=$GITHUB_APP_ID,PERPERIS_QA_GITHUB_INSTALLATION_ID=$GITHUB_INSTALLATION_ID,PERPERIS_QA_GITHUB_REPO=$TICKETS_REPO,PERPERIS_QA_CONCURRENCY=16" \
+            --set-env-vars "PERPERIS_QA_ENV=staging,PERPERIS_QA_AUTH_MODE=identity,PERPERIS_QA_TICKET_SOURCE=github,PERPERIS_QA_ORIGIN=$ORIGIN,PERPERIS_QA_IDENTITY_PROJECT=$PROJECT_ID,PERPERIS_QA_GITHUB_APP_ID=$GITHUB_APP_ID,PERPERIS_QA_GITHUB_INSTALLATION_ID=$GITHUB_INSTALLATION_ID,PERPERIS_QA_GITHUB_REPO=$TICKETS_REPO,PERPERIS_QA_CONCURRENCY=16,PERPERIS_QA_SCREENSHOT_BUCKET=$SCREENSHOT_BUCKET" \
             --set-secrets "PERPERIS_QA_SECRET=perperis-qa-secret:latest,PERPERIS_QA_MEMBERS=perperis-qa-members:latest,PERPERIS_QA_GITHUB_PRIVATE_KEY=perperis-qa-github-key:latest,PERPERIS_QA_IDENTITY_WEB_API_KEY=perperis-qa-web-api-key:latest,PERPERIS_QA_GITHUB_WEBHOOK_SECRET=perperis-qa-webhook-secret:latest" \
             --allow-unauthenticated
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"
@@ -89,6 +90,6 @@ jobs:
             sleep 5
           done
           [ "$code" = "200" ] || { echo "::error::Staging did not answer; check the Cloud Run logs."; exit 1; }
-          curl -s "$ORIGIN/api/auth/config" | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["mode"]=="identity" and c["tickets_source"]=="github", c; print("Config OK:", c["mode"], c["tickets_source"], c["tickets_repo"])'
+          curl -s "$ORIGIN/api/auth/config" | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["mode"]=="identity" and c["tickets_source"]=="github" and c["screenshots_enabled"], c; print("Config OK:", c["mode"], c["tickets_source"], c["tickets_repo"], "screenshots on")'
           echo "### Staging deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "Open **$ORIGIN**. Only emails on the member list can sign in." >> "$GITHUB_STEP_SUMMARY"

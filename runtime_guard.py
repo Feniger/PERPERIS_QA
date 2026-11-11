@@ -5,7 +5,8 @@ so it can be tested in isolation.
 
 - local:   allowed only off Cloud Run (no K_SERVICE).
 - staging: allowed only with verified identity sign-in, GitHub as the ticket
-           source and a member list. Never the shared password or the
+           source, a member list and the private screenshot bucket (whose
+           privacy app.py checks against Cloud Storage at start-up). Never the shared password or the
            in-memory local ticket store.
 - anything else, including production: blocked. Production needs a separate,
   owner-approved release change.
@@ -45,4 +46,8 @@ def check(env):
     if not env.get('PERPERIS_QA_MEMBERS', '').strip():
         # Never echo the list: it contains email addresses.
         _block('staging requires the QA member list (PERPERIS_QA_MEMBERS).')
+    if not env.get('PERPERIS_QA_SCREENSHOT_BUCKET', '').strip():
+        _block('staging requires the private screenshot bucket (PERPERIS_QA_SCREENSHOT_BUCKET).')
+    if env.get('PERPERIS_QA_SCREENSHOTS'):
+        _block('staging stores screenshots only in the private bucket, never in memory.')
     return 'staging'

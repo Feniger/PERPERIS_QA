@@ -29,7 +29,7 @@ def main():
     print(result.stdout.strip())
     blocked=docker('run','--rm','--network','none','--read-only','--tmpfs','/tmp:rw,nosuid,nodev,size=32m',
         '-e','K_SERVICE=synthetic-qa-service',IMAGE,check=False)
-    assert blocked.returncode!=0 and 'cloud startup is blocked' in blocked.stderr, 'Cloud startup was not blocked'
+    assert blocked.returncode!=0 and 'cloud startup is blocked' in blocked.stderr, 'Cloud startup was not blocked: '+blocked.stderr[-1500:]
     with socket.socket() as available:
         available.bind(('127.0.0.1',0));port=available.getsockname()[1]
     password=secrets.token_urlsafe(24)

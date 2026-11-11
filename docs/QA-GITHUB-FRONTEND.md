@@ -197,6 +197,8 @@ There is no database option any more.
 | `PERPERIS_QA_GITHUB_REPO` | default `krummb/kattens-pt` |
 | `PERPERIS_QA_GITHUB_PRIVATE_KEY` or `..._PRIVATE_KEY_FILE` | the App private key (**secret**: Secret Manager in staging; never in Git, logs or chat) |
 | `PERPERIS_QA_GITHUB_WEBHOOK_SECRET` | webhook signing secret, 20+ characters (**secret**; same value in the App's webhook settings) |
+| `PERPERIS_QA_SCREENSHOT_BUCKET` | private screenshot bucket (staging: `perperis-qa-staging-screenshots`, required; QA refuses to start unless it enforces uniform access and public access prevention) |
+| `PERPERIS_QA_SCREENSHOTS` | `memory` for local development only (images kept in memory); unset = screenshots off |
 
 Reads are cached for 60 seconds (a report triggers a refresh). The UI shows
 issue numbers (`#12`) with a link to GitHub. To stay far below the App's
@@ -211,6 +213,16 @@ issue numbers (`#12`) with a link to GitHub. To stay far below the App's
   dashboard says "GitHub can't be reached right now. Showing data from
   HH:MM") and GitHub is not asked again for 60 seconds. With no data yet, the
   error is shown, also without retrying on every request.
+
+**Screenshots (decision 4.1, backend).** Endpoints, all behind sign-in:
+`GET /api/tickets/{n}/screenshots` (list; also deletes images past 365
+days), `POST` the same path with the raw image as the body (any member;
+origin header required; 30 uploads per member per 10 minutes per instance;
+at most 10 per issue), `GET .../screenshots/{id}` (the image, `?thumb=true`
+for a 480 px WebP preview; `Cache-Control: private, no-store`, `nosniff`)
+and `DELETE .../screenshots/{id}` (uploader or Admin). Upload and list
+check that the issue is a QA ticket. `/api/auth/config` reports
+`screenshots_enabled`.
 
 **Reporting (milestone 2).** "Report a bug" creates the issue as
 `perperis-qa[bot]` with labels `qa`, `bug`, `sev:<severity>` and `area:<name>`
