@@ -49,7 +49,7 @@ def main():
         request=Request(origin+'/api/login',data=json.dumps({'password':password}).encode(),headers={'Content-Type':'application/json'})
         with urlopen(request,timeout=5) as response:
             cookie=response.headers['Set-Cookie'].split(';')[0]
-        request=Request(origin+'/api/tickets',data=json.dumps({'title':'Synthetic image smoke','reporter':'Test','testing_round':'R01'}).encode(),headers={
+        request=Request(origin+'/api/tickets',data=json.dumps({'title':'Synthetic image smoke','reporter':'Test','testing_round':'R01','description':'Expected a page, saw an error'}).encode(),headers={
             'Content-Type':'application/json','Cookie':cookie,'X-QA-Request':'1','Origin':origin})
         with urlopen(request,timeout=5) as response:
             assert response.status==201

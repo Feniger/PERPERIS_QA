@@ -254,7 +254,16 @@ Reported by <member name> via PERPERIS QA
 `@` in user text is neutralised so a report cannot ping GitHub users, and the
 last "Reported by" line wins, so text above it cannot impersonate a reporter.
 In managed sign-in the reporter is the signed-in member; in local mode, the
-typed name. Screenshots are off (see milestone 2 below).
+typed name. The description is required (at least 10 characters,
+expected vs actual) because GitHub readers cannot see QA's screenshots.
+
+**Screenshots in the UI.** In "Report a bug", images can be pasted
+(Ctrl/Cmd+V anywhere in the dialog), dropped or picked; they wait in a queue
+until the issue exists and then upload, and if one fails the dialog switches
+to the new ticket with **Retry upload**. On an existing ticket, **Add
+screenshot** (or paste/drop) uploads at once. The ticket shows thumbnails
+(full size opens in a new tab), who added each, "N of 10 uploaded", and a
+Delete button for the uploader or an Admin.
 
 **Status changes (milestone 3).** In the ticket dialog, a member chooses a
 change their role allows (Developer: triaged, in progress, fixed, deployed;

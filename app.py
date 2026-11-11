@@ -109,7 +109,8 @@ class SignIn(BaseModel):
 
 class TicketCreate(BaseModel):
     title: str = Field(min_length=3,max_length=180)
-    description: str = Field(default='',max_length=10000)
+    # Required: GitHub readers cannot see QA's screenshots, so the words must carry the report.
+    description: str = Field(min_length=10, max_length=10000)
     reporter: str = Field(min_length=1,max_length=100)
     category: str = 'ui_ux'
     severity: str = 'medium'
@@ -119,7 +120,7 @@ class TicketCreate(BaseModel):
     deploy_version: str = Field(default='',max_length=70)
     assigned_to: str = Field(default='',max_length=100)
 
-    @field_validator('title', 'reporter', 'testing_round', mode='before')
+    @field_validator('title', 'description', 'reporter', 'testing_round', mode='before')
     @classmethod
     def strip_required_text(cls, value):
         return value.strip() if isinstance(value, str) else value
@@ -277,7 +278,7 @@ def auth_config():
     check_runtime()
     identity.check_configuration()
     source = getattr(APP.state, 'tickets', None)
-    # attachments_enabled stays False until the screenshot UI (PR 3) replaces static/attachments.js.
+    # attachments_enabled is the retired database-backed flag; the UI reads screenshots_enabled.
     result = {'mode': identity.mode(), 'attachments_enabled': False,
               'screenshots_enabled': getattr(APP.state, 'screenshots', None) is not None,
               'screenshot_limit': screenshots.MAX_PER_ISSUE,

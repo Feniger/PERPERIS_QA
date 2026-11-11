@@ -290,3 +290,10 @@ input::placeholder, textarea::placeholder { color: var(--disabled); }
 .member-row button { grid-column: 1 / -1; }
 @media (min-width: 40rem) { .member-row { grid-template-columns: 1fr 9rem 8rem auto; align-items: center; } .member-row .member-name { grid-column: auto; } .member-row button { grid-column: auto; } }
 input[readonly] { background: var(--surface-1); color: var(--muted); }
+.shots-note { font-size: 0.8125rem; color: var(--muted); margin: 0 0 0.75rem; }
+.shots-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.shots-pick:focus-within { outline: 3px solid var(--blue); outline-offset: 2px; }
+.screenshot-count { font: 500 0.8125rem/1 var(--font-body, inherit); letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: 0.5rem; }
+.screenshot-meta { flex: 1; font-size: 0.8125rem; color: var(--muted); }
+.screenshot-item.queued img { opacity: 0.6; }
+.screenshot-item a { display: block; line-height: 0; }

@@ -50,7 +50,7 @@ class QATests(unittest.TestCase):
 
     def test_rounds_mutations_and_status_changes(self):
         self.login()
-        body = {'title': 'Valid title', 'reporter': 'Tester', 'testing_round': 'R09'}
+        body = {'title': 'Valid title', 'reporter': 'Tester', 'testing_round': 'R09', 'description': 'Expected it to work, it did not'}
         wrong = self.client.post('/api/tickets', headers=HEADERS, json=body)
         self.assertEqual(wrong.status_code, 422)
         self.assertIn('R01', wrong.json()['detail'])
@@ -62,7 +62,7 @@ class QATests(unittest.TestCase):
     def test_status_lifecycle_triage_fix_deploy_verify_reopen(self):
         self.login()
         created = self.client.post('/api/tickets', headers=HEADERS, json={
-            'title': 'Lifecycle', 'reporter': 'X', 'testing_round': 'R01', 'severity': 'high'}).json()['ticket']
+            'title': 'Lifecycle', 'reporter': 'X', 'testing_round': 'R01', 'severity': 'high', 'description': 'Expected it to work, it did not'}).json()['ticket']
         seen = created['updated_at']
 
         def change(status, **extra):
@@ -91,7 +91,7 @@ class QATests(unittest.TestCase):
     def test_status_change_conflicts_and_validation(self):
         self.login()
         created = self.client.post('/api/tickets', headers=HEADERS, json={
-            'title': 'Conflict', 'reporter': 'X', 'testing_round': 'R01'}).json()['ticket']
+            'title': 'Conflict', 'reporter': 'X', 'testing_round': 'R01', 'description': 'Expected it to work, it did not'}).json()['ticket']
         path = f'/api/tickets/{created["id"]}'
         self.assertEqual(self.client.patch(path, headers=HEADERS, json={'status': 'triaged', 'expected_updated_at': created['updated_at']}).status_code, 200)
         stale = self.client.patch(path, headers=HEADERS, json={'status': 'fixed', 'expected_updated_at': created['updated_at']})
@@ -118,7 +118,7 @@ class QATests(unittest.TestCase):
 
     def test_store_starts_empty_on_each_start(self):
         self.login()
-        self.client.post('/api/tickets', headers=HEADERS, json={'title': 'Kept only in memory', 'reporter': 'X', 'testing_round': 'R01'})
+        self.client.post('/api/tickets', headers=HEADERS, json={'title': 'Kept only in memory', 'reporter': 'X', 'testing_round': 'R01', 'description': 'Expected it to work, it did not'})
         with TestClient(app.APP) as restarted:
             restarted.post('/api/login', json={'password': 'test-password-long-unique'})
             self.assertEqual(restarted.get('/api/tickets').json()['tickets'], [])
