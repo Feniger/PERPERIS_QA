@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PERPERIS QA mark: a Q in the PERPERIS K's language (black slabs, 45-degree cuts, pink wedge). -->
+  <rect width="512" height="512" rx="112" fill="#fff"/>
+  <path fill-rule="evenodd" fill="#000" d="M82 102 H414 V320 L302 432 H82 Z M166 186 V348 H270 L330 288 V186 Z"/>
+  <path fill="#fff" d="M207 254 H325 L503 432 V444 H371 Z"/>
+  <path fill="#fc135c" d="M226 268 H318 L482 432 H390 Z"/>
+</svg>

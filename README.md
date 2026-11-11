@@ -29,7 +29,9 @@ secrets.
   password for local use only
 - Status changes by role (Triage / Fix / Deploy / Verify / Close / Reopen),
   written to the issue with a "<change> by <name> via PERPERIS QA" comment
-- Not yet: screenshots (later, bucket-only)
+- Screenshots in QA's private bucket, visible only inside QA (see `docs/QA-GITHUB-FRONTEND.md`)
+- App icon and home-screen install: a Q in the PERPERIS K's style (`static/icon.svg`; PNGs rendered
+  with `python tools/render_icons.py`), web manifest "PERPERIS QA" / "QA"
 - CI on every pull request: unit tests, browser smoke tests, container checks
 
 ## Run locally
