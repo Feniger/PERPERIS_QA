@@ -582,7 +582,7 @@ class AppWiring(unittest.TestCase):
                 self.assertEqual((a['total'], a['open'], a['fixed'], a['verified'], a['critical']), (3, 2, 2, 1, 1))
                 self.assertEqual(a['backlog'], 2)
                 headers = {'X-QA-Request': '1'}
-                body = {'title': 'New bug', 'reporter': 'X', 'testing_round': 'R05'}
+                body = {'title': 'New bug', 'reporter': 'X', 'testing_round': 'R05', 'description': 'Expected it to work, it did not'}
                 self.assertEqual(a['current_round'], 'R05')
                 self.assertEqual((a['data_stale'], a['data_as_of']), (True, '2026-11-11T10:00:00+00:00'))
                 created = client.post('/api/tickets', headers=headers, json=body)

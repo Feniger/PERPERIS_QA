@@ -220,12 +220,12 @@ function renderTable(){
 /* ---------- quick report ---------- */
 function applyIdentityToQuick(){
   const r=$('q-reporter');r.readOnly=managed();if(managed()||!r.value) r.value=defaultReporter();
-  $('quick-note').textContent=qaScreenshots.enabled()?'Plain form. No AI. To attach screenshots, use Add details.':'Plain form. No AI. Screenshots are switched off on this server.';
+  $('quick-note').textContent=qaScreenshots.enabled()?'Plain form. No AI. To attach screenshots, use Add details.':'Plain form. No AI.';
 }
 /* GitHub mode: reports become GitHub issues; status changes return in the next milestone (detail is read-only). */
 function applyTicketSource(){
   $('quick-note').textContent=githubMode()
-    ?`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI. Screenshots come in a later milestone.`
+    ?`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI.${qaScreenshots.enabled()?' To attach screenshots, use Add details.':''}`
     :'Local test data, not GitHub: reports are kept in memory and disappear when QA restarts.';
 }
 function prefillQuick(){
@@ -282,11 +282,13 @@ $('ticket-form').addEventListener('submit',async e=>{
     let res;
     if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_updated_at:editing.updated_at,status:form.elements.status.value,comment:form.elements.comment.value}});}
     else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
-    /* Screenshots upload after the ticket is saved. On failure the ticket stays saved and the failed files stay queued. */
-    if(qaScreenshots.queue.length){
-      editing=res.ticket;
+    /* New report with screenshots: the issue exists first, then the dialog switches to it and the
+       queued files upload. If one fails, the ticket stays saved and "Retry upload" resends the rest. */
+    if(!editing&&qaScreenshots.queue.length){
+      const pending=[...qaScreenshots.queue];await refresh();openEdit(res.ticket.id);
+      qaScreenshots.queue=pending;qaScreenshots.render();
       try{await qaScreenshots.upload(res.ticket.id);}
-      catch(err){await refresh();const pending=[...qaScreenshots.queue];openEdit(res.ticket.id);qaScreenshots.add(pending);$('form-error').textContent=`Ticket ${ticketNo(res.ticket.id)} saved. ${err.message} Failed screenshots remain queued; save again to retry.`;return;}
+      catch(err){$('form-error').textContent=`Ticket ${ticketNo(res.ticket.id)} was created. Use Retry upload for the screenshots.`;return;}
     }
     setModal(false);await refresh();
   }catch(err){

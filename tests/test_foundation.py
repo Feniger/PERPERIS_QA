@@ -33,7 +33,7 @@ from app import APP
 with TestClient(APP) as client:
     assert client.post('/api/login', json={'password': os.environ['PERPERIS_QA_PASSWORD']}).status_code == 200
     created = client.post('/api/tickets', headers={'X-QA-Request': '1'}, json={
-        'title': 'Synthetic report', 'reporter': 'Tester', 'testing_round': 'R01'})
+        'title': 'Synthetic report', 'reporter': 'Tester', 'testing_round': 'R01', 'description': 'Expected it to work, it did not'})
     assert created.status_code == 201, created.text
 '''))
 

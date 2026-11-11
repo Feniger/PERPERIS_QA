@@ -26,8 +26,8 @@ class HardeningTests(unittest.TestCase):
 
     def test_required_text_is_trimmed_before_length_validation(self):
         self.client.post('/api/login',json={'password':'synthetic-password'})
-        body={'title':'Valid title','reporter':'Tester','testing_round':'R01'}
-        for field in ('title','reporter','testing_round'):
+        body={'title':'Valid title','reporter':'Tester','testing_round':'R01','description':'Expected it to work, it did not'}
+        for field in ('title','reporter','testing_round','description'):
             response=self.client.post('/api/tickets',headers={'X-QA-Request':'1'},json={**body,field:'   '})
             self.assertEqual(response.status_code,422)
         result=self.client.post('/api/tickets',headers={'X-QA-Request':'1'},json={**body,'title':'  Valid title  '})

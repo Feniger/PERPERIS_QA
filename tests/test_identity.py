@@ -66,7 +66,7 @@ class IdentityTests(unittest.TestCase):
 
     def create(self, **extra):
         return self.client.post('/api/tickets', headers=self.headers, json={
-            'title': 'Synthetic identity ticket', 'reporter': 'Spoofed Reporter', 'testing_round': 'R01', **extra})
+            'title': 'Synthetic identity ticket', 'reporter': 'Spoofed Reporter', 'testing_round': 'R01', 'description': 'Expected it to work, it did not', **extra})
 
     def test_listed_members_get_their_listed_role(self):
         for email, role in (('admin@example.test', 'Admin'), ('creator@example.test', 'Admin'),
@@ -161,7 +161,7 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(self.exchange('admin@example.test', headers={'X-QA-Request': '1', 'Origin': 'https://evil.test'}).status_code, 403)
         self.assertEqual(self.exchange('admin@example.test').status_code, 200)
         self.assertEqual(self.client.post('/api/tickets', headers={'X-QA-Request': '1'}, json={
-            'title': 'No origin', 'reporter': 'X', 'testing_round': 'R01'}).status_code, 403)
+            'title': 'No origin', 'reporter': 'X', 'testing_round': 'R01', 'description': 'Expected it to work, it did not'}).status_code, 403)
 
     def test_throttle_limits_session_exchange(self):
         for _ in range(identity.THROTTLE_LIMIT):

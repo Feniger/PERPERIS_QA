@@ -91,8 +91,8 @@
               <label class="field">Title
                 <input name="q_title" id="q-title" required minlength="3" maxlength="180" placeholder="REPORT A BUG. WHAT IS NOT WORKING?" autocomplete="off">
               </label>
-              <label class="field">Steps, expected, actual
-                <textarea name="q_description" id="q-description" rows="3" maxlength="10000" placeholder="1. …  Expected: …  Actual: …"></textarea>
+              <label class="field">Steps, expected, actual *
+                <textarea name="q_description" id="q-description" rows="3" required minlength="10" maxlength="10000" placeholder="1. …  Expected: …  Actual: …"></textarea>
               </label>
               <div class="quick-row">
                 <label class="field">Severity
@@ -205,7 +205,7 @@
     <form id="ticket-form">
       <div id="create-fields">
         <label class="field">Issue title *<input name="title" required minlength="3" maxlength="180" placeholder="What is not working?"></label>
-        <label class="field">What happened?<textarea name="description" rows="4" placeholder="Steps to reproduce, expected result, actual result"></textarea></label>
+        <label class="field">What happened? * (expected vs actual)<textarea name="description" rows="4" required minlength="10" maxlength="10000" placeholder="Steps to reproduce. Expected: … Actual: …"></textarea></label>
         <div class="form-grid">
           <label class="field">Reported by *<input name="reporter" required></label>
           <label class="field">Testing round *<input name="testing_round" required placeholder="R04"></label>
@@ -225,9 +225,13 @@
         <label class="field">Comment (optional, posted on the GitHub issue with your name)<textarea name="comment" rows="4" placeholder="What changed? What did you check?"></textarea></label>
       </div>
       <section id="screenshot-controls" class="shots hidden" aria-labelledby="shots-title">
-        <h3 class="shots-title" id="shots-title">Private screenshots</h3>
-        <label class="field">Select screenshots<input id="screenshot-input" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
-        <div id="screenshot-drop" tabindex="0" class="screenshot-drop">Paste a screenshot here, drag files here, or use the file picker. Up to 10 images, 10 MiB each.</div>
+        <h3 class="shots-title" id="shots-title">Screenshots <span id="screenshot-count" class="screenshot-count"></span></h3>
+        <p class="shots-note">Visible only to QA members. The GitHub issue gets a link, so describe the problem in words too.</p>
+        <div class="shots-actions">
+          <label class="btn btn-ink shots-pick"><span id="screenshot-pick-label">Add screenshot</span><input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
+          <button type="button" id="screenshot-retry" class="btn btn-primary hidden">Retry upload</button>
+        </div>
+        <div id="screenshot-drop" tabindex="0" class="screenshot-drop">Paste (Ctrl/Cmd+V) or drop images here. PNG, JPEG or WebP, up to 10 MB each, at most 10 per ticket.</div>
         <p id="screenshot-status" class="error" role="status"></p>
         <div id="screenshot-queue"></div>
         <div id="screenshot-existing"></div>
