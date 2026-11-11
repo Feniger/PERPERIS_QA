@@ -250,9 +250,11 @@ default) is an in-memory stand-in for the repository with one open round,
 `R01`. It uses the same request builder and issue mapping as GitHub, so the UI
 behaves the same; data disappears on restart. Staging refuses it.
 
-**Sign-in (milestone 2b).** `PERPERIS_QA_MEMBERS` is `email=Role` pairs
-separated by commas (Admin, Developer, Tester; at least one Admin), kept in the
-secret store. Identity Platform verifies password and email; an email not on
+**Sign-in (milestone 2b).** `PERPERIS_QA_MEMBERS` is `email=Role` or
+`email=Role:Name` entries separated by commas (Admin, Developer, Tester; at
+least one Admin), kept in the secret store. The optional name is what QA shows,
+for example in "Reported by <name>"; without it QA uses the account's display
+name or the part before the @, so email addresses never appear in issues. Identity Platform verifies password and email; an email not on
 the list is refused ("not on the QA member list"). The session cookie
 (`qa_session`, Secure, HttpOnly, SameSite=Strict, 8 hours) carries the signed
 identity but not the role: the role is looked up on every request, so removing

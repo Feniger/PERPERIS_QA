@@ -22,9 +22,18 @@ class MemberList(unittest.TestCase):
             'dev@example.test': 'Developer', 'tester@example.test': 'Tester'})
         self.assertEqual(identity.members({}), {})
 
+    def test_optional_display_names(self):
+        entries = identity.member_entries({'PERPERIS_QA_MEMBERS': 'erik@example.test=Admin:Erik  K, dev@example.test=Developer'})
+        self.assertEqual(entries, {'erik@example.test': ('Admin', 'Erik K'), 'dev@example.test': ('Developer', '')})
+        with patch.dict(os.environ, {'PERPERIS_QA_MEMBERS': 'erik@example.test=Admin:Erik,dev@example.test=Developer'}):
+            self.assertEqual(identity.display_name('Erik@Example.test', 'erik@example.test'), 'Erik')  # list wins
+            self.assertEqual(identity.display_name('dev@example.test', 'Dana Dev'), 'Dana Dev')       # provider name
+            self.assertEqual(identity.display_name('dev@example.test', 'dev@example.test'), 'dev')    # never the address
+            self.assertEqual(identity.display_name('dev@example.test'), 'dev')
+
     def test_rejects_bad_entries_without_echoing_them(self):
         for raw in ('secret-person@example.test', 'x@example.test=Owner', 'notanemail=Admin',
-                    'a@example.test=Admin,a@example.test=Tester'):
+                    'a@example.test=Admin,a@example.test=Tester', 'b@example.test=Admin:Name=Other'):
             with self.assertRaises(RuntimeError) as caught:
                 identity.members({'PERPERIS_QA_MEMBERS': raw})
             self.assertNotIn('example.test', str(caught.exception))
@@ -109,6 +118,16 @@ class IdentityTests(unittest.TestCase):
         from fastapi import HTTPException
         self.provider_session.side_effect = HTTPException(401, 'Sign in again')
         self.assertEqual(self.client.get('/api/me').status_code, 401)
+
+    def test_reports_never_carry_an_email_address(self):
+        # Provider without a display name (like a fresh Identity Platform account): name falls back to the local part.
+        with patch.object(identity, 'verify_provider_token', side_effect=lambda token: {
+                'uid': 'uid-x', 'email': 'tester@example.test', 'name': None, 'email_verified': True, 'auth_time': time.time()}):
+            self.assertEqual(self.exchange('anything').status_code, 200)
+        self.assertEqual(self.client.get('/api/me').json()['name'], 'tester')
+        self.assertEqual(self.create().json()['ticket']['reporter'], 'tester')
+        with patch.dict(os.environ, {'PERPERIS_QA_MEMBERS': MEMBERS.replace('tester@example.test=Tester', 'tester@example.test=Tester:Tess T')}):
+            self.assertEqual(self.client.get('/api/me').json()['name'], 'Tess T')
 
     def test_reporter_is_the_signed_in_member_and_tester_cannot_assign(self):
         self.assertEqual(self.exchange('tester@example.test').status_code, 200)

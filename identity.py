@@ -27,7 +27,7 @@ SESSION_SECONDS = 8 * 3600
 THROTTLE_WINDOW = 300
 THROTTLE_LIMIT = 20
 LOG = logging.getLogger('perperis_qa.security')
-MEMBERS_FORMAT = ('PERPERIS_QA_MEMBERS must be email=Role pairs separated by commas, '
+MEMBERS_FORMAT = ('PERPERIS_QA_MEMBERS must be email=Role or email=Role:Name entries separated by commas, '
                   'with roles Admin, Developer or Tester and at least one Admin')
 
 
@@ -46,21 +46,41 @@ def mode():
     return value
 
 
-def members(env=None) -> dict[str, str]:
-    """Verified email (lower case) -> role. Errors never echo the configured value."""
+def member_entries(env=None) -> dict[str, tuple[str, str]]:
+    """Verified email (lower case) -> (role, display name or ''). Errors never echo the configured value.
+
+    Entries are `email=Role` or `email=Role:Name`; the optional name is what QA shows
+    (e.g. in "Reported by <name>"), so email addresses never appear in GitHub issues.
+    """
     raw = (os.environ if env is None else env).get('PERPERIS_QA_MEMBERS', '')
-    result: dict[str, str] = {}
+    result: dict[str, tuple[str, str]] = {}
     for item in raw.split(','):
         item = item.strip()
         if not item:
             continue
-        email, separator, role = item.rpartition('=')
+        email, separator, rest = item.partition('=')
         email = email.strip().lower()
-        role = role.strip()
-        if not separator or '@' not in email or role not in ROLES or email in result:
+        role, _, name = rest.partition(':')
+        role, name = role.strip(), ' '.join(name.split())[:60]
+        if not separator or '@' not in email or role not in ROLES or email in result or '=' in rest:
             raise RuntimeError(MEMBERS_FORMAT)
-        result[email] = role
+        result[email] = (role, name)
     return result
+
+
+def members(env=None) -> dict[str, str]:
+    """Verified email (lower case) -> role."""
+    return {email: role for email, (role, _) in member_entries(env).items()}
+
+
+def display_name(email: str, claimed: str | None = None) -> str:
+    """The listed name, else the provider's display name, else the part before the @ (never the address)."""
+    listed = member_entries().get(email.lower(), ('', ''))[1]
+    if listed:
+        return listed
+    if claimed and '@' not in claimed:
+        return ' '.join(claimed.split())[:60]
+    return email.split('@', 1)[0][:60]
 
 
 def check_configuration():
@@ -196,7 +216,7 @@ def current(raw):
     if role is None:
         raise HTTPException(401, 'Sign in required')
     verify_provider_session(data.get('sub'), data.get('auth'))
-    return Principal(str(data.get('name') or data['email'])[:100], data.get('sub'), role, data['email'])
+    return Principal(display_name(data['email'], data.get('name')), data.get('sub'), role, data['email'])
 
 
 def verify_provider_session(subject, authenticated_at):
