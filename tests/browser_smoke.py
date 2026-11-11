@@ -93,8 +93,14 @@ def main():
                         page.route('**/api/auth/config', lambda route: route.fulfill(json={
                             'mode': 'identity', 'web_api_key': 'synthetic-public-config', 'tickets_source': 'github'}))
 
+                        no_account = []
+
                         def provider(route):
-                            calls.append(route.request.url.split('accounts:')[1].split('?')[0])
+                            action = route.request.url.split('accounts:')[1].split('?')[0]
+                            calls.append(action)
+                            if action == 'signInWithPassword' and no_account:
+                                route.fulfill(status=400, json={'error': {'code': 400, 'message': 'INVALID_LOGIN_CREDENTIALS'}})
+                                return
                             route.fulfill(json={'idToken': 'synthetic-in-memory-token'})
                         page.route('https://identitytoolkit.googleapis.com/**', provider)
                         page.route('**/api/session', lambda route: route.fulfill(status=403, json={
@@ -103,8 +109,14 @@ def main():
                         page.locator('#email').fill('synthetic@example.test')
                         page.locator('#password').fill('synthetic-registration-password')
                         page.locator('#register').click()
-                        expect(page.locator('#login-error')).to_contain_text('Check your email')
+                        expect(page.locator('#login-error')).to_contain_text('Account created')
                         assert calls == ['signUp', 'sendOobCode']
+                        # Google's reason is shown in plain words, not a generic failure.
+                        no_account.append(True)
+                        page.locator('#password').fill('synthetic-registration-password')
+                        page.locator('#login-form button.primary').click()
+                        expect(page.locator('#login-error')).to_contain_text('Create verified account')
+                        no_account.clear()
                         page.locator('#password').fill('synthetic-registration-password')
                         page.locator('#login-form button.primary').click()
                         expect(page.locator('#login-error')).to_contain_text('not on the QA member list')
