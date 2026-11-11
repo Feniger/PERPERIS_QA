@@ -58,10 +58,10 @@ Startup is guarded by `runtime_guard.py`: on Cloud Run, or with
 `PERPERIS_QA_ENV` set to anything other than `local`, the app refuses to start
 unless it is a validated `staging` configuration (managed sign-in, GitHub as
 the ticket source, a member list). `production` is always blocked.
-Nothing is deployed: the staging setup in QA-CLOUD-06 was written for the old
-database design, was never run, and is revised in milestone 4 of
-docs/QA-GITHUB-FRONTEND.md (`setup.sh` and `deploy-staging.yml` still describe
-the old design until then).
+Staging (milestone 4) runs on Cloud Run in QA's own Google project
+`perperis-qa-staging`, set up by `infra/staging/setup.sh` and deployed by the
+manual "Deploy staging" workflow; see
+[docs/QA-CLOUD-06-STAGING.md](docs/QA-CLOUD-06-STAGING.md).
 
 Testing-round labels follow `R01`, `R02`, etc. A report counts as **found** in
 its discovery round; the first fixed/verified transition counts in its
