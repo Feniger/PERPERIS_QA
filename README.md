@@ -29,7 +29,12 @@ secrets.
   password for local use only
 - Status changes by role (Triage / Fix / Deploy / Verify / Close / Reopen),
   written to the issue with a "<change> by <name> via PERPERIS QA" comment
-- Screenshots in QA's private bucket, visible only inside QA (see `docs/QA-GITHUB-FRONTEND.md`)
+- Screenshots in QA's private bucket, visible only inside QA: paste, drop or pick
+  in the report dialog or on a ticket, thumbnails, one "📎 N screenshots" comment
+  on the issue, deleted 30 days after Verify and after 365 days at the latest
+  (see `docs/QA-GITHUB-FRONTEND.md`, decision 4.1)
+- Staging is live: https://perperis-qa-staging-982639404002.europe-north1.run.app
+  (members only; see `docs/QA-CLOUD-06-STAGING.md`)
 - App icon and home-screen install: a Q in the PERPERIS K's style (`static/icon.svg`; PNGs rendered
   with `python tools/render_icons.py`), web manifest "PERPERIS QA" / "QA"
 - CI on every pull request: unit tests, browser smoke tests, container checks
@@ -48,7 +53,9 @@ uvicorn app:APP --host 127.0.0.1 --port 8787
 ```
 
 Open http://127.0.0.1:8787 . Without further settings, tickets live in memory
-(open round `R01`) and disappear on restart. To read and create real issues,
+(open round `R01`) and disappear on restart; add
+`PERPERIS_QA_SCREENSHOTS=memory` to try screenshots (kept in memory too). To read
+and create real issues,
 also set `PERPERIS_QA_TICKET_SOURCE=github` and the GitHub App settings in
 [docs/QA-GITHUB-FRONTEND.md](docs/QA-GITHUB-FRONTEND.md) (the App key is a
 secret; never commit it).
@@ -59,10 +66,12 @@ Local mode uses a shared operator password and is meant for localhost only.
 Startup is guarded by `runtime_guard.py`: on Cloud Run, or with
 `PERPERIS_QA_ENV` set to anything other than `local`, the app refuses to start
 unless it is a validated `staging` configuration (managed sign-in, GitHub as
-the ticket source, a member list). `production` is always blocked.
+the ticket source, a member list, the screenshot bucket, which must be
+private). `production` is always blocked.
 Staging (milestone 4) runs on Cloud Run in QA's own Google project
-`perperis-qa-staging`, set up by `infra/staging/setup.sh` and deployed by the
-manual "Deploy staging" workflow; see
+`perperis-qa-staging`, set up by `infra/staging/setup.sh` and
+`infra/staging/screenshots-bucket.sh` and deployed by the manual "Deploy
+staging" workflow (owner approves each deploy); see
 [docs/QA-CLOUD-06-STAGING.md](docs/QA-CLOUD-06-STAGING.md).
 
 Testing-round labels follow `R01`, `R02`, etc. A report counts as **found** in
@@ -84,17 +93,19 @@ python -m unittest discover -s tests -v
 The Cloud Foundation Stories (QA-CLOUD-01 to 05) were merged on 2026-11-10;
 QA-CLOUD-06 (staging) was merged as code but never set up. Their runbooks
 are history now: the GitHub front end retired ticket persistence, PostgreSQL,
-the importer, database-backed sessions and members, and the screenshot store
-(QA-CLOUD-02 and 04 entirely). The startup guard, CSP and container hardening
-from 01, 03 and 05 still apply in updated form:
+the importer, database-backed sessions and members (QA-CLOUD-02 entirely).
+Screenshots returned on 2026-11-11 without a database (`screenshots.py`,
+reusing QA-CLOUD-04's image checks). The startup guard, CSP and container
+hardening from 01, 03 and 05 still apply in updated form:
 
 - [QA-CLOUD-01](docs/QA-CLOUD-01.md): assessment, risks, startup guard
 - [QA-CLOUD-02](docs/QA-CLOUD-02.md): PostgreSQL persistence and importer
 - [QA-CLOUD-03](docs/QA-CLOUD-03.md): verified identity, membership, roles
-- [QA-CLOUD-04](docs/QA-CLOUD-04.md): private screenshots
+- [QA-CLOUD-04](docs/QA-CLOUD-04.md): private screenshots (database version;
+  the current design is decision 4.1 in QA-GITHUB-FRONTEND)
 - [QA-CLOUD-05](docs/QA-CLOUD-05.md): build hardening, CSP, container
-- [QA-CLOUD-06](docs/QA-CLOUD-06-STAGING.md): free private staging (Cloud Run
-  + Neon) — superseded in part, see above
+- [QA-CLOUD-06](docs/QA-CLOUD-06-STAGING.md): **current** staging guide
+  (Cloud Run, Identity Platform, screenshot bucket, webhooks; no database)
 - [RELEASE_PLAN](docs/RELEASE_PLAN.md): the pre-2026-11-11 release plan, kept
   as history
 - [Design system](docs/design/QA-DESIGN-SYSTEM.md): the PERPERIS-style shell

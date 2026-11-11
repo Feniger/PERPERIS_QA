@@ -45,7 +45,10 @@ aside. Issues live in `kattens-pt`; the QA code stays here, in
   stored as a QA secret (never in Git or chat); the server exchanges it for
   short-lived installation tokens. Actions appear as `perperis-qa[bot]`; the
   acting person is written into the issue/comment text. Webhooks (`issues`,
-  `issue_comment`, `pull_request`) keep the QA view current.
+  `issue_comment`, `label`, `milestone`; switched on 2026-11-11) keep the QA
+  view current. `pull_request` is not subscribed: it needs a Pull requests
+  permission the App deliberately lacks, and "Fixes #N" closing an issue
+  already sends an `issues` event.
 - Testers and the creator log in to the QA app itself (Identity Platform
   login, verified email, admin approval, roles Admin/Developer/Tester). **No
   GitHub account is needed** to report or verify a bug.
@@ -300,12 +303,14 @@ starts on "Change status…", so opening and saving a ticket never changes it by
 accident.
 
 **Webhooks (milestone 3).** `POST /api/github/webhook` accepts the App's
-`issues`, `issue_comment`, `pull_request`, `label` and `milestone` events,
+`issues`, `issue_comment`, `label` and `milestone` events (it would also
+accept `pull_request`, which the App does not send),
 verified with `PERPERIS_QA_GITHUB_WEBHOOK_SECRET` (HMAC-SHA256,
 `X-Hub-Signature-256`; the endpoint answers 404 while no secret is set). A
 webhook only clears QA's cache; QA then reads GitHub itself, so a webhook can
-never inject data. The App's webhook URL and secret are set at staging
-(milestone 4), when QA has a public address.
+never inject data. The App's webhook points at staging and has been on since
+2026-11-11 (deliveries answer 204). A webhook clears the cache only of the
+instance that receives it; a second instance catches up within 60 seconds.
 
 **Local development (milestone 2b).** `PERPERIS_QA_TICKET_SOURCE=memory` (the
 default) is an in-memory stand-in for the repository with one open round,
@@ -341,23 +346,27 @@ PR; merging follows the rule in section 6.
    real `kattens-pt` issues labeled `qa`. Owner registers and installs the
    GitHub App; labels and milestones get created in `kattens-pt`.
 2. **Report** (built 2026-11-11): "New bug" creates issues (title, body
-   template, labels, milestone, reporter line). **Screenshots moved to the
-   no-database rework:** their records live in database rows tied to the old
-   ticket table. With decision 4.2 they come back later as bucket-only
-   objects keyed by issue number (private bucket, linked from the issue).
+   template, labels, milestone, reporter line). Screenshots came back
+   later as bucket-only objects (see "Screenshots" below).
 2b. **Lean identity, no QA storage** (built 2026-11-11; decision 4.2): email→role list,
    signed session cookie, logs for security events; GitHub becomes the only
    ticket source; the database layer, SQL migrations, importer and member
    screen are removed. This is what makes staging small.
-3. **Close the loop** (QA side built 2026-11-11): Triage / Verify / Reopen
-   actions in QA and the webhook endpoint (both described above); a separate
-   PR in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
-   `deploy-cloud-run`.
-4. **Staging** (setup and deploy workflow rewritten 2026-11-11, see
-   [QA-CLOUD-06-STAGING.md](QA-CLOUD-06-STAGING.md)): revise QA-CLOUD-06 for the no-storage design (Cloud Run,
-   Identity Platform, secrets: GitHub App key, session secret, member list;
-   no database), then deploy after owner approval (own Google
-   project, budget alert, public vs. locked sign-in decided).
+3. **Close the loop** (done 2026-11-11): Triage / Verify / Reopen actions in
+   QA and the webhook endpoint (both described above); `kattens-pt` #52 added
+   the `status:deployed` + "Live in Deploy #N" step to `deploy-cloud-run`.
+   Checked end to end on 2026-11-11: test issue `kattens-pt` #55 → docs PR #56
+   "Fixes #55" → "Live in Deploy #28" → Verified in QA.
+4. **Staging** (live since 2026-11-11, see
+   [QA-CLOUD-06-STAGING.md](QA-CLOUD-06-STAGING.md)): Cloud Run, Identity
+   Platform, Secret Manager, no database, in QA's own project
+   `perperis-qa-staging`; public sign-in page, member list decides who gets
+   in; webhooks on. Still open: a budget alert (owner).
+4b. **Screenshots** (live since 2026-11-11, PRs #24–#27; decision 4.1):
+   private bucket, upload/view/delete in QA, one GitHub comment per issue,
+   deletion 30 days after Verify and after 365 days at the latest. Checked end
+   to end on `kattens-pt` #57 (image stored, comment posted, `customTime` set
+   by Verify).
 5. **Later**: an "Ask QA" chat/AI feature on the same adapter — needs an AI
    provider key, a separate decision, not started.
 

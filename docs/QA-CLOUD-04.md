@@ -1,5 +1,7 @@
 # QA-CLOUD-04 — private screenshot attachments
 
+> **Historical (2026-11-11).** This database-backed version was removed with decision 4.2. Screenshots now live only in a private bucket with no database (`screenshots.py`, decision 4.1 in [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md)); the image checks below were reused.
+
 Stacked on QA-CLOUD-03. Feature disabled by default. No bucket, cloud resource,
 provider account, deployed service or live object is created or accessed.
 Cloud Run remains blocked, including with PostgreSQL/identity/GCS configured.

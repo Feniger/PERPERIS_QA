@@ -1,15 +1,20 @@
 # QA-CLOUD-06 — private staging on Cloud Run (milestone 4)
 
-Status: rewritten on 2026-11-11 for the GitHub front end with no QA storage
-(decision 4.2 in [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md)). The earlier
-Neon/PostgreSQL version of this guide and its database steps are gone.
+Status: **live since 2026-11-11**, with screenshots and webhooks. Rewritten
+that day for the GitHub front end with no database (decision 4.2 in
+[QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md)); the earlier Neon/PostgreSQL
+version of this guide is gone. Steps 1–6 below are done; a budget alert is
+still open.
 
 Staging is the QA app on Cloud Run in QA's own Google project,
 **`perperis-qa-staging`** (organisation lokalen.nu, billing account shared with
 `kattens-pt`). It reads and writes issues in `krummb/kattens-pt` through the
 "PERPERIS QA" GitHub App and nothing else of the training app.
 
-- Address: **https://perperis-qa-staging-982639404002.europe-north1.run.app**
+- Address: **https://perperis-qa-staging-982639404002.europe-north1.run.app**.
+  Cloud Run also answers on an older-style address
+  (`…-vfgmkr7thq-lz.a.run.app`); sign-in does not work there because it is not
+  the configured origin, so always share the address above.
 - Sign-in page is public; only emails on the member list get in.
 - Production stays blocked by `runtime_guard.py`.
 
@@ -85,8 +90,9 @@ metadata `uploader` (identity subject, never an email), `uploader_name`,
 
 ## Steps
 
-1. **Setup** (done by Claude Code through the browser, owner's account): run
-   `infra/staging/setup.sh` in Cloud Shell in `perperis-qa-staging`.
+1. **Setup** (done 2026-11-11 by the owner in Cloud Shell): run
+   `infra/staging/setup.sh` in `perperis-qa-staging`. Cloud Shell's
+   "Authorize" dialog opens a Google popup that only the owner can click.
 2. **Owner adds two secret values** in the console: Security > Secret Manager >
    `perperis-qa-github-key` > New version > upload the `.pem`; then
    `perperis-qa-members` > New version > paste the list. Never in chat or Git.
@@ -96,7 +102,7 @@ metadata `uploader` (identity subject, never an email), `uploader_name`,
    tests `/api/auth/config`.
 4. **First sign-in**: each member registers on the staging page with their
    listed email, verifies it from the email link, then signs in.
-5. **Screenshot bucket** (owner approves first): run
+5. **Screenshot bucket** (done 2026-11-11; owner approves first): run
    `infra/staging/screenshots-bucket.sh` in Cloud Shell, then deploy with
    `PERPERIS_QA_SCREENSHOT_BUCKET` (added to the deploy workflow in screenshots
    PR 2). Staging refuses to start if the bucket is not private.
