@@ -102,13 +102,43 @@ rule.
 
 ## 4. Settled decisions (2026-11-11)
 
-1. **Screenshots belong in QA's own private bucket, never in `kattens-pt`.**
-   That is why the GitHub App needs no Contents permission. **Today QA has no
-   screenshot support at all:** the database-backed `attachments.py` was
-   removed with decision 4.2, and screenshots are deferred. When they return,
-   they are bucket-only objects keyed by issue number (no database records),
-   linked from the issue. Until then, reporters describe the problem in text or
-   attach images directly on GitHub.
+1. **Screenshots live in QA's own private bucket, never in `kattens-pt`.**
+   That is why the GitHub App needs no Contents permission (its permissions
+   stay unchanged). Owner decisions of 2026-11-11, built in four PRs
+   (bucket and docs; backend; UI; GitHub comment and Verify/Reopen):
+   - **Where:** private bucket `perperis-qa-staging-screenshots` in QA's
+     project (europe-north1, uniform access, public access prevention, soft
+     delete off). Only `qa-runtime` has object access, scoped to the bucket.
+     No database: the bucket *is* the record.
+   - **Objects:** `issues/<issue number>/<random id>.<ext>` with custom
+     metadata uploader subject (never an email), display name, sha256 and
+     upload time. Listing the prefix gives an issue's images; the cap of 10
+     per issue is counted from it. Writes use `if_generation_match=0`.
+   - **Visibility:** images are shown only inside QA, streamed through QA with
+     the session checked on every request (`Cache-Control: private, no-store`,
+     `nosniff`). GitHub gets one bot comment per issue, "📎 N screenshots in
+     PERPERIS QA: <link>", edited rather than reposted. No public or expiring
+     links. Because GitHub readers cannot see the images, a report must have a
+     written description (expected vs actual).
+   - **Validation:** single-frame PNG/JPEG/WebP, ≤10 MB, ≤8192 px per side,
+     decompression-bomb guard, re-encoded to strip metadata, then downscaled
+     to at most 2000 px on the long side. Screenshots stay PNG; photos may be
+     WebP.
+   - **Who:** members upload (in-memory per-user throttle); the uploader or an
+     Admin deletes.
+   - **Retention:** deleted 30 days after the issue is verified; anything
+     older than 12 months is deleted regardless. Verify sets each object's
+     `customTime`; a lifecycle rule deletes 30 days after it, and a second
+     rule deletes objects older than 365 days.
+   - **Reopen (owner accepted 2026-11-11):** Cloud Storage does not allow
+     `customTime` to be removed or moved earlier once set; the documented way
+     to reset it is to rewrite the object. A rewrite also restarts the
+     object's age, so the 365-day rule would count from the rewrite. So:
+     Reopen rewrites the issue's objects without `customTime`, and QA itself
+     deletes any object whose `uploaded_at` metadata is older than 365 days
+     whenever it lists an issue's images, so the 12-month limit still holds.
+   - **Guard:** staging refuses to start if the bucket is not private
+     (uniform access and public access prevention enforced).
 2. **QA keeps no storage of its own (lean rollout).** Settled with the owner
    on 2026-11-11 after weighing Identity Platform claims, Neon and Firestore:
    - **Members and roles:** a short list in QA's configuration,
@@ -130,8 +160,8 @@ rule.
      in-memory limit per QA instance on the session exchange.
    - **Security events:** structured application logs (Cloud Logging when
      staged), not a table.
-   - **Screenshots:** deferred. When added, they live only in the private
-     bucket, keyed by issue number, with no database records.
+   - **Screenshots:** only in the private bucket, keyed by issue number,
+     with no database records (decision 4.1).
    - Neon/PostgreSQL, `database.py`, the SQL migrations and the importer are
      removed. Firestore was considered and set aside; it can be added later
      without changing what users see if the team outgrows the list.
@@ -294,7 +324,7 @@ PR; merging follows the rule in section 6.
 4. **Staging** (setup and deploy workflow rewritten 2026-11-11, see
    [QA-CLOUD-06-STAGING.md](QA-CLOUD-06-STAGING.md)): revise QA-CLOUD-06 for the no-storage design (Cloud Run,
    Identity Platform, secrets: GitHub App key, session secret, member list;
-   no database, no bucket), then deploy after owner approval (own Google
+   no database), then deploy after owner approval (own Google
    project, budget alert, public vs. locked sign-in decided).
 5. **Later**: an "Ask QA" chat/AI feature on the same adapter — needs an AI
    provider key, a separate decision, not started.

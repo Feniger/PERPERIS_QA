@@ -21,8 +21,18 @@ Staging is the QA app on Cloud Run in QA's own Google project,
 | Sign-in | Identity Platform (under 50,000 monthly users) | $0 |
 | Secrets | Secret Manager, 5 secrets | about $0 (a few cents at most) |
 | Images | Artifact Registry, last 3 images kept | about $0 (under 0.5 GB free) |
+| Screenshots | Cloud Storage, Standard, europe-north1, private bucket | a few cents (see below) |
 
-No database, no bucket. A budget alert is still recommended (owner reminder).
+Screenshot estimate: Cloud Storage's free tier covers only three US regions, so
+europe-north1 is paid from the first byte, at roughly $0.02 per GB-month
+(Google's single-region reference rate), $0.005 per 1,000 uploads/lists and
+$0.0004 per 1,000 reads. Images are downscaled to at most 2000 px, so a
+screenshot is typically 0.1–1 MB; at most 10 per issue, deleted 30 days after
+Verify and after 365 days at the latest. 500 stored screenshots ≈ 0.25 GB ≈
+$0.005 a month; operations add cents. Serving goes through Cloud Run in the
+same region, so there is no internet egress from the bucket.
+
+No database. A budget alert is still recommended (owner reminder).
 
 ## What `infra/staging/setup.sh` creates (Cloud Shell, re-runnable)
 
@@ -52,6 +62,27 @@ No database, no bucket. A budget alert is still recommended (owner reminder).
 The script never replaces an existing secret value; rotate a secret by adding a
 new version in the console and redeploying.
 
+## What `infra/staging/screenshots-bucket.sh` creates (screenshots step 1)
+
+A separate, re-runnable script, so adding screenshots never re-runs the rest of
+setup:
+
+- Cloud Storage API (enabled if needed).
+- Bucket **`perperis-qa-staging-screenshots`** in europe-north1, Standard
+  storage, **uniform bucket-level access**, **public access prevention
+  enforced**, **soft delete off** (a deleted image is gone, not kept 7 days).
+- Lifecycle rules: delete **30 days after the object's custom time** (QA sets it
+  on Verify) and delete anything **older than 365 days**. Google applies these
+  asynchronously, usually within a day.
+- Bucket-scoped access for `qa-runtime` only: `roles/storage.objectUser`
+  (create, read, list, delete objects) and `roles/storage.legacyBucketReader`
+  (read the bucket's settings for the start-up privacy check). No project-wide
+  storage role; `qa-deployer` gets nothing new; no public or signed URLs.
+
+Objects are `issues/<issue number>/<random id>.<png|jpg|webp>` with custom
+metadata `uploader` (identity subject, never an email), `uploader_name`,
+`sha256` and `uploaded_at`. See QA-GITHUB-FRONTEND.md decision 4.1.
+
 ## Steps
 
 1. **Setup** (done by Claude Code through the browser, owner's account): run
@@ -65,7 +96,11 @@ new version in the console and redeploying.
    tests `/api/auth/config`.
 4. **First sign-in**: each member registers on the staging page with their
    listed email, verifies it from the email link, then signs in.
-5. **Webhooks (optional, live updates)**: GitHub > Settings > Developer
+5. **Screenshot bucket** (owner approves first): run
+   `infra/staging/screenshots-bucket.sh` in Cloud Shell, then deploy with
+   `PERPERIS_QA_SCREENSHOT_BUCKET` (added to the deploy workflow in screenshots
+   PR 2). Staging refuses to start if the bucket is not private.
+6. **Webhooks (optional, live updates)**: GitHub > Settings > Developer
    settings > GitHub Apps > PERPERIS QA > Webhook: active, URL
    `https://perperis-qa-staging-982639404002.europe-north1.run.app/api/github/webhook`,
    secret = the value of `perperis-qa-webhook-secret` (owner copies it from
@@ -81,5 +116,5 @@ access on their next request after the new revision serves traffic.
 ## Rollback
 
 Cloud Run keeps earlier revisions: Cloud Run > `perperis-qa-staging` >
-Revisions > route 100% traffic to the previous one. Nothing else to roll back:
-QA stores no data; tickets are GitHub issues.
+Revisions > route 100% traffic to the previous one. Tickets are GitHub issues;
+the only QA data is the screenshot bucket, which a rollback does not touch.
