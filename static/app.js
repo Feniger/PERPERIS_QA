@@ -10,7 +10,7 @@ const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',
 let tickets = [], analytics = null, editing = null, lastFocus = null, selectedRound = null, loaded = false, session = {role:'Admin'};
 /* Statuses each role may set. Mirrors the server's role matrix (the server enforces it). */
 const ROLE_STATUSES = {Developer:['triaged','in_progress','fixed','deployed'], Tester:['verified','closed','reopened']};
-const allowedStatuses = () => STATUSES.filter(s => session.role==='Admin' || (ROLE_STATUSES[session.role]||[]).includes(s));
+const allowedStatuses = () => STATUSES.filter(s => s!=='reported' && (session.role==='Admin' || (ROLE_STATUSES[session.role]||[]).includes(s)));
 const managed = () => qaIdentity.config?.mode === 'identity';
 /* Tickets are GitHub issues; locally an in-memory stand-in (see docs/QA-GITHUB-FRONTEND.md). */
 const githubMode = () => qaIdentity.config?.tickets_source === 'github';
@@ -268,22 +268,19 @@ function newTicket(prefill={}){
 }
 function openEdit(id){
   const ticket=tickets.find(t=>t.id===id);if(!ticket)return;editing=ticket;$('ticket-form').reset();setDialogMode(false);
-  /* Read-only detail: status changes from QA return in milestone 3. */
-  $('create-fields').classList.add('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.add('hidden');
-  $('modal-eyebrow').textContent=`${ticketNo(id)} / Ticket detail`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save ticket';$('form-error').textContent='';
+  $('create-fields').classList.add('hidden');$('update-fields').classList.remove('hidden');$('form-submit').classList.remove('hidden');
+  $('modal-eyebrow').textContent=`${ticketNo(id)} / Ticket detail`;$('modal-title').textContent=ticket.title;$('form-submit').textContent='Save status';$('form-error').textContent='';
   qaScreenshots.reset(id);
   $('ticket-detail').innerHTML=`<p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;
-  $('edit-status').innerHTML=allowedStatuses().map(s=>`<option value="${s}">${label(s)}</option>`).join('');
-  if([...$('edit-status').options].some(o=>o.value===ticket.status)) $('edit-status').value=ticket.status;
-  $('ticket-form').elements.assigned_to.readOnly=session.role==='Tester';
-  $('ticket-form').elements.assigned_to.value=ticket.assigned_to||'';$('ticket-form').elements.resolution_notes.value=ticket.resolution_notes||'';$('ticket-form').elements.resolution_round.value=ticket.fixed_round||ticket.verified_round||'';
+  /* No preselected change: saving without choosing is refused by the browser (required) and the server. */
+  $('edit-status').innerHTML='<option value="" disabled selected>Change status…</option>'+allowedStatuses().map(s=>`<option value="${s}">${label(s)}</option>`).join('');
   setModal(true);
 }
 $('ticket-form').addEventListener('submit',async e=>{
   e.preventDefault();const form=e.currentTarget,btn=$('form-submit');btn.disabled=true;$('form-error').textContent='';
   try{
     let res;
-    if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_version:editing.version,status:form.elements.status.value,assigned_to:form.elements.assigned_to.value,resolution_notes:form.elements.resolution_notes.value,resolution_round:form.elements.resolution_round.value}});}
+    if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_updated_at:editing.updated_at,status:form.elements.status.value,comment:form.elements.comment.value}});}
     else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
     /* Screenshots upload after the ticket is saved. On failure the ticket stays saved and the failed files stay queued. */
     if(qaScreenshots.queue.length){

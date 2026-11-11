@@ -215,6 +215,8 @@ class FakeGitHub:
         self.requests = []
         self.token_calls = 0
         self.created = []
+        self.patched = []
+        self.comments = []
         self.reads_down = False      # simulate GitHub outages for reads
         self.use_etags = False       # answer If-None-Match with 304 like GitHub
 
@@ -262,6 +264,24 @@ class FakeGitHub:
         if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/events'):
             number = int(path.split('/')[-2])
             return httpx.Response(200, json=self.events.get(number, []))
+        if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/comments') and request.method == 'POST':
+            self.comments.append((int(path.split('/')[-2]), json.loads(request.content)['body']))
+            return httpx.Response(201, json={'id': len(self.comments)})
+        if path.startswith(f'/repos/{REPO}/issues/') and path.rsplit('/', 1)[-1].isdigit():
+            number = int(path.rsplit('/', 1)[-1])
+            found = next((i for i in self.issues if i['number'] == number), None)
+            if found is None:
+                return httpx.Response(404, json={'message': 'Not Found'})
+            if request.method == 'GET':
+                return httpx.Response(200, json=found)
+            if request.method == 'PATCH':
+                patch = json.loads(request.content)
+                self.patched.append((number, patch))
+                found['labels'] = [{'name': n} for n in patch.get('labels', [l['name'] for l in found['labels']])]
+                found['state'] = patch.get('state', found['state'])
+                found['state_reason'] = patch.get('state_reason', found.get('state_reason'))
+                found['updated_at'] = '2026-11-15T09:00:%02dZ' % len(self.patched)
+                return httpx.Response(200, json=found)
         return httpx.Response(404, json={'message': 'Not Found'})
 
 
@@ -457,6 +477,54 @@ class Caching(unittest.TestCase):
         self.assertEqual(len(self.fake.created), 1)
 
 
+class StatusChanges(unittest.TestCase):
+    """Milestone 3: Triage / Verify / Reopen written to GitHub."""
+
+    def labels(self, patch):
+        return patch['labels']
+
+    def test_status_patch_keeps_one_status_label(self):
+        base = issue(1, 'X', labels=['qa', 'bug', 'sev:high', 'status:fixed', 'status:deployed'])
+        self.assertEqual(gh.status_patch(base, 'verified'),
+                         {'state': 'closed', 'state_reason': 'completed', 'labels': ['qa', 'bug', 'sev:high', 'status:verified']})
+        self.assertEqual(gh.status_patch(base, 'reopened'), {'state': 'open', 'labels': ['qa', 'bug', 'sev:high']})
+        self.assertEqual(gh.status_patch(base, 'closed'),
+                         {'state': 'closed', 'state_reason': 'not_planned', 'labels': ['qa', 'bug', 'sev:high']})
+        self.assertEqual(gh.status_patch(base, 'fixed'), {'labels': ['qa', 'bug', 'sev:high', 'status:fixed']})
+        self.assertEqual(gh.status_patch(base, 'in_progress'),
+                         {'state': 'open', 'labels': ['qa', 'bug', 'sev:high', 'status:in-progress']})
+        with self.assertRaises(gh.InvalidReport):
+            gh.status_patch(base, 'reported')
+
+    def make(self, fake):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
+
+    def test_verify_closes_the_issue_and_comments_who_did_it(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        adapter = self.make(fake)
+        ticket = adapter.change_status(2, 'verified', actor='Anna Tester', comment='Checked on @phone',
+                                       expected_updated_at='2026-11-12T10:00:00Z')
+        self.assertEqual(fake.patched, [(2, {'state': 'closed', 'state_reason': 'completed',
+                                             'labels': ['qa', 'bug', 'sev:medium', 'status:verified']})])
+        self.assertEqual(fake.comments, [(2, '**Verified** by Anna Tester via PERPERIS QA\n\nChecked on @\u200bphone')])
+        self.assertEqual(ticket['status'], 'verified')
+
+    def test_reopen_removes_old_status_labels(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        self.make(fake).change_status(3, 'reopened', actor='Creator')
+        self.assertEqual(fake.patched, [(3, {'state': 'open', 'labels': ['qa', 'bug', 'sev:low']})])
+
+    def test_conflicts_and_non_qa_issues_are_refused_without_changes(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES] + [issue(7, 'Not a QA issue', labels=['bug'])], EVENTS)
+        adapter = self.make(fake)
+        with self.assertRaises(gh.TicketConflict):
+            adapter.change_status(1, 'triaged', actor='X', expected_updated_at='2020-01-01T00:00:00Z')
+        for number in (7, 404, 99):  # not labelled qa, missing, a pull request
+            with self.assertRaises(gh.TicketNotFound):
+                adapter.change_status(number, 'triaged', actor='X')
+        self.assertEqual((fake.patched, fake.comments), ([], []))
+
+
 class StubAdapter(gh.GitHubIssues):  # counts as the GitHub source; no HTTP client
     def __init__(self, tickets):
         self._tickets = tickets
@@ -476,6 +544,10 @@ class StubAdapter(gh.GitHubIssues):  # counts as the GitHub source; no HTTP clie
 
     def freshness(self):
         return {'stale': True, 'as_of': '2026-11-11T10:00:00+00:00'}
+
+    def change_status(self, number, status, *, actor, comment='', expected_updated_at=None):
+        self.changed = (number, status, actor, comment)
+        return {'id': number, 'status': status}
 
     def create_issue(self, **values):
         if values['testing_round'] != 'R05':
@@ -521,7 +593,9 @@ class AppWiring(unittest.TestCase):
                 wrong = client.post('/api/tickets', headers=headers, json={**body, 'testing_round': 'R09'})
                 self.assertEqual(wrong.status_code, 422)
                 self.assertIn('R05', wrong.json()['detail'])
-                self.assertEqual(client.patch('/api/tickets/1', headers=headers, json={'status': 'triaged'}).status_code, 405)
+                changed = client.patch('/api/tickets/1', headers=headers, json={'status': 'triaged', 'comment': 'ok'})
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertEqual(qa_app.APP.state.tickets.changed, (1, 'triaged', 'Admin', 'ok'))
                 self.assertEqual(client.get('/api/tickets/1/history').status_code, 200)
                 self.assertEqual(client.get('/api/tickets/2/history').status_code, 404)
                 self.assertEqual(client.get('/api/tickets/1/attachments').status_code, 404)

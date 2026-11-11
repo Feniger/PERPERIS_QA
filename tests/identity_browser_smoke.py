@@ -94,13 +94,28 @@ def main():
                         admin.locator('[name=title]').fill('Synthetic HTTPS member ticket')
                         admin.locator('#form-submit').click()
                         expect(admin.locator('#modal')).to_be_hidden()
-                        for name,role in (('creator','Admin'),('developer','Developer'),('tester','Tester')):
-                            context,page=user(name)
-                            expect(page.locator('#who')).to_have_text(f'{name} · {role}')
-                            expect(page.locator('#ticket-rows .row-id')).to_have_text('#1')
-                            page.locator('#ticket-rows tr').click()
-                            expect(page.locator('#ticket-detail')).to_contain_text('Reported by admin')
-                            expect(page.locator('#form-submit')).to_be_hidden()
+                        creator_context,creator=user('creator')
+                        expect(creator.locator('#who')).to_have_text('creator · Admin')
+                        expect(creator.locator('#ticket-rows .row-id')).to_have_text('#1')
+                        developer_context,developer=user('developer')
+                        expect(developer.locator('#who')).to_have_text('developer · Developer')
+                        developer.locator('#ticket-rows tr').click()
+                        expect(developer.locator('#ticket-detail')).to_be_visible()
+                        expect(developer.locator('#ticket-detail')).to_contain_text('Reported by admin')
+                        assert developer.locator('#edit-status option').all_text_contents()==['Change status…','Triaged','In progress','Fixed','Deployed']
+                        developer.locator('#edit-status').select_option('fixed')
+                        developer.locator('#form-submit').click()
+                        expect(developer.locator('#modal')).to_be_hidden()
+                        tester_context,tester=user('tester')
+                        expect(tester.locator('#who')).to_have_text('tester · Tester')
+                        tester.locator('#ticket-rows tr').click()
+                        assert tester.locator('#edit-status option').all_text_contents()==['Change status…','Verified','Closed','Reopened']
+                        tester.locator('#edit-status').select_option('verified')
+                        tester.locator('[name=comment]').fill('Checked on the synthetic phone')
+                        tester.locator('#form-submit').click()
+                        expect(tester.locator('#modal')).to_be_hidden()
+                        expect(tester.locator('#k-verified')).to_have_text('1')
+                        expect(tester.locator('#ticket-rows .chip')).to_have_text('Verified')
                         cookies=admin_context.cookies()
                         session=next(c for c in cookies if c['name']=='qa_session')
                         assert session['secure'] and session['httpOnly'] and session['sameSite']=='Strict'
@@ -108,7 +123,7 @@ def main():
                         expect(outsider.locator('#login-error')).to_contain_text('not on the QA member list')
                         expect(outsider.locator('#workspace')).to_be_hidden()
                         print('HTTPS identity browser smoke passed: Secure signed cookies, member list with Admin/Developer/Tester roles, '
-                              'reporter from sign-in, read-only detail and denial for unlisted emails.')
+                              'reporter from sign-in, Developer fixed and Tester verified by role, denial for unlisted emails.')
                     finally:
                         browser.close()
             finally:

@@ -166,6 +166,7 @@ There is no database option any more.
 | `PERPERIS_QA_GITHUB_INSTALLATION_ID` | `180847731` (not secret) |
 | `PERPERIS_QA_GITHUB_REPO` | default `krummb/kattens-pt` |
 | `PERPERIS_QA_GITHUB_PRIVATE_KEY` or `..._PRIVATE_KEY_FILE` | the App private key (**secret**: Secret Manager in staging; never in Git, logs or chat) |
+| `PERPERIS_QA_GITHUB_WEBHOOK_SECRET` | webhook signing secret, 20+ characters (**secret**; same value in the App's webhook settings) |
 
 Reads are cached for 60 seconds (a report triggers a refresh). The UI shows
 issue numbers (`#12`) with a link to GitHub. To stay far below the App's
@@ -211,8 +212,38 @@ Reported by <member name> via PERPERIS QA
 `@` in user text is neutralised so a report cannot ping GitHub users, and the
 last "Reported by" line wins, so text above it cannot impersonate a reporter.
 In managed sign-in the reporter is the signed-in member; in local mode, the
-typed name. Status changes from QA return 405 until milestone 3, and
-screenshots are off (see milestone 2 below).
+typed name. Screenshots are off (see milestone 2 below).
+
+**Status changes (milestone 3).** In the ticket dialog, a member chooses a
+change their role allows (Developer: triaged, in progress, fixed, deployed;
+Tester: verified, closed, reopened; Admin: all) plus an optional comment.
+QA makes **one** issue update and then posts a comment
+"**<change>** by <name> via PERPERIS QA" (with the comment, `@` neutralised),
+so GitHub shows who did what even though the App writes it:
+
+| QA change | Issue update |
+|---|---|
+| Triaged / In progress | label `status:triaged` / `status:in-progress`; reopens a closed issue |
+| Fixed / Deployed | label `status:fixed` / `status:deployed`; open/closed state unchanged |
+| Verified | label `status:verified`, closed as completed |
+| Closed | closed as not planned |
+| Reopened | reopened, all `status:*` labels removed |
+
+The new status label replaces any other `status:*` label, so an issue
+carries at most one (status is still derived from the newest label, so
+changes made directly on GitHub are read correctly too). The dialog sends the
+issue's `updated_at` from when it was opened; if the issue changed since, the
+save is refused with "someone else changed this ticket" (409). The status menu
+starts on "Change status…", so opening and saving a ticket never changes it by
+accident.
+
+**Webhooks (milestone 3).** `POST /api/github/webhook` accepts the App's
+`issues`, `issue_comment`, `pull_request`, `label` and `milestone` events,
+verified with `PERPERIS_QA_GITHUB_WEBHOOK_SECRET` (HMAC-SHA256,
+`X-Hub-Signature-256`; the endpoint answers 404 while no secret is set). A
+webhook only clears QA's cache; QA then reads GitHub itself, so a webhook can
+never inject data. The App's webhook URL and secret are set at staging
+(milestone 4), when QA has a public address.
 
 **Local development (milestone 2b).** `PERPERIS_QA_TICKET_SOURCE=memory` (the
 default) is an in-memory stand-in for the repository with one open round,
@@ -254,9 +285,10 @@ PR; merging follows the rule in section 6.
    signed session cookie, logs for security events; GitHub becomes the only
    ticket source; the database layer, SQL migrations, importer and member
    screen are removed. This is what makes staging small.
-3. **Close the loop**: Triage / Verify / Reopen actions in QA; a separate PR
-   in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
-   `deploy-cloud-run`; webhooks for live updates.
+3. **Close the loop** (QA side built 2026-11-11): Triage / Verify / Reopen
+   actions in QA and the webhook endpoint (both described above); a separate
+   PR in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
+   `deploy-cloud-run`.
 4. **Staging**: revise QA-CLOUD-06 for the no-storage design (Cloud Run,
    Identity Platform, secrets: GitHub App key, session secret, member list;
    no database, no bucket), then deploy after owner approval (own Google

@@ -117,6 +117,26 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201, created.text)
         self.assertEqual(created.json()['ticket']['reporter'], 'Tester')
 
+    def test_status_changes_follow_the_role_matrix(self):
+        self.assertEqual(self.exchange('admin@example.test').status_code, 200)
+        number = self.create().json()['ticket']['id']
+        path = f'/api/tickets/{number}'
+
+        def change(status):
+            return self.client.patch(path, headers=self.headers, json={'status': status}).status_code
+
+        self.assertEqual(self.exchange('dev@example.test').status_code, 200)
+        for status in ('verified', 'closed', 'reopened'):
+            self.assertEqual(change(status), 403)
+        self.assertEqual(change('fixed'), 200)
+        self.assertEqual(self.exchange('tester@example.test').status_code, 200)
+        for status in ('triaged', 'in_progress', 'fixed', 'deployed'):
+            self.assertEqual(change(status), 403)
+        self.assertEqual(change('verified'), 200)
+        self.assertEqual(app.APP.state.tickets.comments[number][-1], '**Verified** by Tester via PERPERIS QA')
+        self.assertEqual(self.exchange('creator@example.test').status_code, 200)
+        self.assertEqual(change('reopened'), 200)  # Admin: everything
+
     def test_origin_and_header_are_required(self):
         self.assertEqual(self.exchange('admin@example.test', headers={'X-QA-Request': '1'}).status_code, 403)
         self.assertEqual(self.exchange('admin@example.test', headers={'X-QA-Request': '1', 'Origin': 'https://evil.test'}).status_code, 403)

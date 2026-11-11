@@ -57,7 +57,64 @@ class QATests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/tickets', json={**body, 'testing_round': 'R01'}).status_code, 403)
         self.assertEqual(self.client.post('/api/tickets', headers={**HEADERS, 'Origin': 'https://other.invalid'},
                                           json={**body, 'testing_round': 'R01'}).status_code, 403)
-        self.assertEqual(self.client.patch('/api/tickets/1', headers=HEADERS, json={'status': 'fixed'}).status_code, 405)
+        self.assertEqual(self.client.patch('/api/tickets/1', headers=HEADERS, json={'status': 'fixed'}).status_code, 404)
+
+    def test_status_lifecycle_triage_fix_deploy_verify_reopen(self):
+        self.login()
+        created = self.client.post('/api/tickets', headers=HEADERS, json={
+            'title': 'Lifecycle', 'reporter': 'X', 'testing_round': 'R01', 'severity': 'high'}).json()['ticket']
+        seen = created['updated_at']
+
+        def change(status, **extra):
+            nonlocal seen
+            r = self.client.patch(f'/api/tickets/{created["id"]}', headers=HEADERS,
+                                  json={'status': status, 'expected_updated_at': seen, **extra})
+            self.assertEqual(r.status_code, 200, r.text)
+            seen = r.json()['ticket']['updated_at']
+            return r.json()['ticket']
+
+        for status in ('triaged', 'in_progress', 'fixed', 'deployed', 'verified'):
+            self.assertEqual(change(status)['status'], status)
+        a = self.client.get('/api/analytics').json()
+        self.assertEqual((a['open'], a['fixed'], a['verified'], a['backlog']), (0, 1, 1, 0))
+        reopened = change('reopened', comment='Came back on @someone phone')
+        self.assertEqual(reopened['status'], 'reopened')
+        a = self.client.get('/api/analytics').json()
+        # First fix/verification milestones are kept; the issue is open again.
+        self.assertEqual((a['open'], a['fixed'], a['verified']), (1, 1, 1))
+        store = app.APP.state.tickets
+        self.assertEqual(store.comments[created['id']][-1], '**Reopened** by Admin via PERPERIS QA\n\nCame back on @\u200bsomeone phone')
+        self.assertEqual([h['new_status'] for h in self.client.get(f'/api/tickets/{created["id"]}/history').json()['events']],
+                         ['reported', 'triaged', 'in_progress', 'fixed', 'deployed', 'verified', 'reopened'])
+        self.assertEqual(change('closed')['status'], 'closed')
+
+    def test_status_change_conflicts_and_validation(self):
+        self.login()
+        created = self.client.post('/api/tickets', headers=HEADERS, json={
+            'title': 'Conflict', 'reporter': 'X', 'testing_round': 'R01'}).json()['ticket']
+        path = f'/api/tickets/{created["id"]}'
+        self.assertEqual(self.client.patch(path, headers=HEADERS, json={'status': 'triaged', 'expected_updated_at': created['updated_at']}).status_code, 200)
+        stale = self.client.patch(path, headers=HEADERS, json={'status': 'fixed', 'expected_updated_at': created['updated_at']})
+        self.assertEqual(stale.status_code, 409)
+        for bad in ('reported', '', 'done'):
+            self.assertEqual(self.client.patch(path, headers=HEADERS, json={'status': bad}).status_code, 422)
+
+    def test_webhook_is_off_without_a_secret_and_verifies_signatures(self):
+        import hashlib, hmac
+        body = b'{"action":"labeled"}'
+        self.assertEqual(self.client.post('/api/github/webhook', content=body).status_code, 404)
+        secret = 'synthetic-webhook-secret-123'
+        with mock.patch.dict(os.environ, {'PERPERIS_QA_GITHUB_WEBHOOK_SECRET': secret}):
+            signature = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            calls = []
+            with mock.patch.object(app.APP.state.tickets, 'invalidate', side_effect=lambda: calls.append(1)):
+                bad = self.client.post('/api/github/webhook', content=body, headers={'X-Hub-Signature-256': 'sha256=' + '0' * 64, 'X-GitHub-Event': 'issues'})
+                self.assertEqual(bad.status_code, 401)
+                ok = self.client.post('/api/github/webhook', content=body, headers={'X-Hub-Signature-256': signature, 'X-GitHub-Event': 'issues'})
+                self.assertEqual(ok.status_code, 204)
+                ignored = self.client.post('/api/github/webhook', content=body, headers={'X-Hub-Signature-256': signature, 'X-GitHub-Event': 'star'})
+                self.assertEqual(ignored.status_code, 204)
+            self.assertEqual(calls, [1])
 
     def test_store_starts_empty_on_each_start(self):
         self.login()

@@ -220,11 +220,9 @@
       <div id="update-fields" class="hidden">
         <div id="ticket-detail" class="detail-text"></div>
         <div class="form-grid">
-          <label class="field">Status<select name="status" id="edit-status"></select></label>
-          <label class="field">Responsible<input name="assigned_to" placeholder="Assignee"></label>
-          <label class="field">Resolved / verified in round<input name="resolution_round" placeholder="R05"></label>
+          <label class="field">Status<select name="status" id="edit-status" required></select></label>
         </div>
-        <label class="field">Resolution notes<textarea name="resolution_notes" rows="4" placeholder="What changed? What was verified?"></textarea></label>
+        <label class="field">Comment (optional, posted on the GitHub issue with your name)<textarea name="comment" rows="4" placeholder="What changed? What did you check?"></textarea></label>
       </div>
       <section id="screenshot-controls" class="shots hidden" aria-labelledby="shots-title">
         <h3 class="shots-title" id="shots-title">Private screenshots</h3>
