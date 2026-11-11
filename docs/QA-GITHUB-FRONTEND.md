@@ -75,14 +75,21 @@ Created in `kattens-pt` on 2026-11-11 (owner-approved): labels `qa`, `task`
 library|training-mode|progress|settings|admin|auth`; milestone `R05`.
 
 How a ticket is derived from an issue (milestone 1, `github_issues.py`):
-- **Status**: closed with `status:verified` → verified; closed as not planned
-  or duplicate → closed; other closed → deployed (with `status:deployed`) or
-  fixed; open → reopened if a reopen is newer than its status labels, else the
-  most advanced `status:*` label, else reported.
+- **Status**: status labels are not removed when work moves on, so an issue
+  can carry several. The **most recently applied** `status:*` label counts,
+  and only if it was applied after the latest reopen (the current cycle).
+  Closed as not planned or duplicate → closed; other closed → verified or
+  deployed when that is the newest current-cycle label, otherwise fixed (a
+  PR closing the issue means fixed, decision 4.4). Open → the newest
+  current-cycle status label; reopened when reopened with no status label
+  since; otherwise reported. So an old `status:verified` from an earlier round
+  never makes a new fix look verified.
 - **Milestone dates**: fixed = earliest of the first `status:fixed` /
   `status:deployed` / `status:verified` label or the first non-"not planned"
   close; deployed = first `status:deployed` (or verified); verified = first
-  `status:verified`. Reopening never erases them.
+  `status:verified`. Reopening never erases them, so the per-round
+  found/fixed/verified figures count each issue's **first** fix and
+  verification, while the status column shows where it stands now.
 - **Rounds**: found in the issue's `R##` milestone (or "No round"); fixed and
   verified count in the round in progress at that moment, i.e. the newest
   `R##` milestone created before it.
@@ -95,11 +102,13 @@ rule.
 
 ## 4. Settled decisions (2026-11-11)
 
-1. **Screenshots stay in QA's own private bucket.** The existing
-   `attachments.py` (local/GCS backends, two-phase pending/ready, quotas) is
-   kept as-is. A QA ticket page links back from the GitHub issue (a URL in the
-   issue body), but the images themselves are never committed to `kattens-pt`.
-   This is why the GitHub App needs no Contents permission.
+1. **Screenshots belong in QA's own private bucket, never in `kattens-pt`.**
+   That is why the GitHub App needs no Contents permission. **Today QA has no
+   screenshot support at all:** the database-backed `attachments.py` was
+   removed with decision 4.2, and screenshots are deferred. When they return,
+   they are bucket-only objects keyed by issue number (no database records),
+   linked from the issue. Until then, reporters describe the problem in text or
+   attach images directly on GitHub.
 2. **QA keeps no storage of its own (lean rollout).** Settled with the owner
    on 2026-11-11 after weighing Identity Platform claims, Neon and Firestore:
    - **Members and roles:** a short list in QA's configuration,
@@ -110,8 +119,13 @@ rule.
      Adding a tester is a config change plus a redeploy; the "Manage members"
      screen goes away.
    - **Sessions:** a signed, expiring cookie (HMAC with
-     `PERPERIS_QA_SECRET`, about 8 hours). Rotating the secret signs everyone
-     out; there is no per-person revocation.
+     `PERPERIS_QA_SECRET`, 8 hours) that carries the identity but not the
+     role. Every request re-checks two things, so access can be ended per
+     person: the role is looked up in the member list (removing an email ends
+     that person's access on their next request once the updated list is
+     live), and Identity Platform is asked whether the account is still
+     enabled, verified and not revoked (disabling or revoking it there ends the
+     session at once). Rotating the secret signs everyone out.
    - **Throttling:** Identity Platform's own sign-in limits, plus a small
      in-memory limit per QA instance on the session exchange.
    - **Security events:** structured application logs (Cloud Logging when
@@ -141,8 +155,10 @@ rule.
 
 ## Configuration (GitHub mode)
 
-Tickets come from GitHub when `PERPERIS_QA_TICKET_SOURCE=github`; the default
-(`database`) keeps the old ticket store for local development and tests.
+Tickets come from GitHub when `PERPERIS_QA_TICKET_SOURCE=github`, which
+staging requires. Without it (the default, `memory`), QA uses an in-memory
+stand-in for local development and tests (see "Local development" below).
+There is no database option any more.
 
 | Variable | Value |
 |---|---|
@@ -198,10 +214,11 @@ secret store. Identity Platform verifies password and email; an email not on
 the list is refused ("not on the QA member list"). The session cookie
 (`qa_session`, Secure, HttpOnly, SameSite=Strict, 8 hours) carries the signed
 identity but not the role: the role is looked up on every request, so removing
-someone from the list (and redeploying) ends their access at once. Rotating
-`PERPERIS_QA_SECRET` signs everyone out. Identity Platform disabling or
-revoking an account also ends its session. Sign-in, roles and members are
-unchanged (still database-backed until the identity rework).
+someone from the list ends their access on their next request once the
+updated list is live (a config change plus redeploy). Identity Platform is
+checked on every request too, so disabling or revoking an account there ends
+its session at once. Rotating `PERPERIS_QA_SECRET` signs everyone out. Nothing
+about members or sessions is stored by QA.
 
 ## 5. Suggested milestones
 
