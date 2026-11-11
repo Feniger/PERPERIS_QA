@@ -104,8 +104,14 @@ metadata `uploader` (identity subject, never an email), `uploader_name`,
    settings > GitHub Apps > PERPERIS QA > Webhook: active, URL
    `https://perperis-qa-staging-982639404002.europe-north1.run.app/api/github/webhook`,
    secret = the value of `perperis-qa-webhook-secret` (owner copies it from
-   Secret Manager); subscribe to Issues, Issue comment, Pull request, Label,
-   Milestone. Without webhooks QA still refreshes from GitHub every 60 seconds.
+   Secret Manager); subscribe to Issues, Issue comment, Label and Milestone.
+   Do not subscribe to Pull request: that event needs a Pull requests
+   permission the App deliberately lacks (DEC-519), and a PR closing an issue
+   with "Fixes #N" already sends an Issues "closed" event. Without webhooks QA
+   still refreshes from GitHub every 60 seconds. **Done 2026-11-11 by the
+   owner** (ping delivered; App permissions unchanged: Issues read/write,
+   Metadata read). A webhook only clears the cache of the instance that
+   receives it; with two instances the other one catches up within 60 seconds.
 
 ## Changing members
 
