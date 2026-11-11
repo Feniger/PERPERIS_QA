@@ -57,7 +57,7 @@ def main():
                         page.on('pageerror', lambda error: errors.append(str(error)))
                         page.route('https://fonts.googleapis.com/**',lambda route: route.abort())
                         page.route('https://fonts.gstatic.com/**',lambda route: route.abort())
-                        page.goto(origin)
+                        page.goto(origin+'#tickets')  # the redesign puts search and rows on the Tickets view
                         page.locator('#password').fill(password)
                         page.locator('#login-form button.primary').click()
                         page.locator('#workspace').wait_for(state='visible')

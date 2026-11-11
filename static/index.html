@@ -1,11 +1,264 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PERPERIS / QA Control</title><link rel="stylesheet" href="/static/styles.css"></head><body>
-<div id="login" class="login-shell hidden"><div class="login-card"><div class="eyebrow">PERPERIS / INTERNAL SYSTEMS</div><h1>Quality control.</h1><p>Sign in to the standalone QA workspace.</p><form id="login-form"><label id="email-label" class="hidden">Email<input type="email" id="email" autocomplete="username"></label><label>Password<input type="password" id="password" required autocomplete="current-password"></label><button class="primary">Enter workspace ↗</button><div id="identity-actions" class="hidden"><button type="button" class="secondary" id="register">Create verified account</button><button type="button" class="secondary" id="reset-password">Reset password</button></div><div id="login-error" class="error" role="status"></div></form></div></div>
-<div id="workspace" class="hidden app-layout"><aside class="sidebar"><div class="brand"><span class="brand-mark">P<span>·</span></span><div>PERPERIS <small>QA / CONTROL CENTER</small></div></div><nav><a class="nav-active" href="#dashboard">◉ &nbsp; Overview</a><a href="#tickets">▤ &nbsp; Tickets <span id="nav-count">0</span></a><a href="#analytics">⌁ &nbsp; Analytics</a></nav><div class="side-bottom"><div class="side-caption">OPERATIONS</div><p>One source of truth for reported issues and verification.</p><div class="mini-rule"></div><span class="online-indicator">● &nbsp; LOCAL WORKSPACE</span><button class="text-button hidden" id="manage-members">Manage members</button><button class="text-button" id="logout">Sign out</button></div></aside>
-<main><header class="topbar"><div><span class="eyebrow">ENGINEERING / QUALITY ASSURANCE</span><h1>Development health<span class="accent">.</span></h1><p class="subtitle">The state of what we find, what we fix, and what we actually verify.</p></div><div class="header-actions"><span class="clock-tag">LIVE DATA</span><button class="primary" id="new-ticket">＋ Report a bug</button></div></header>
-<section id="dashboard" class="main-section"><div class="kpi-grid"><article class="kpi"><span>TOTAL REPORTED</span><div id="k-total" class="metric">0</div><small>All testing rounds</small></article><article class="kpi"><span>OPEN / NOT VERIFIED</span><div id="k-open" class="metric metric-warning">0</div><small>Needs further work</small></article><article class="kpi"><span>FIXED IN CODE</span><div id="k-fixed" class="metric">0</div><small>Recorded first fix</small></article><article class="kpi"><span>VERIFIED</span><div id="k-verified" class="metric metric-success">0</div><small>Accepted in testing</small></article></div>
-<div class="dashboard-grid"><section class="panel insight-panel"><div class="panel-heading"><div><span class="eyebrow">01 / ISSUE LANDSCAPE</span><h2>At a glance</h2></div><span class="tiny-badge" id="total-tag">0 REPORTS</span></div><div class="feature-value"><div><span class="micro-label">CURRENT BACKLOG</span><div id="backlog" class="large-number">0</div></div><p>Reports awaiting final verification. A fix alone does not close the loop.</p></div><h3>Severity distribution</h3><div id="severity-bars" class="bar-stack"></div><div class="split-line"></div><h3>Issue categories</h3><div id="category-list" class="category-list"></div><div class="split-line"></div><h3>Reported by</h3><div id="reporter-list" class="reporter-list"></div></section>
-<section class="panel chart-panel" id="analytics"><div class="panel-heading"><div><span class="eyebrow">02 / DEVELOPMENT VELOCITY</span><h2>Discovery vs. resolution</h2><p>By testing round · new bugs vs. first fixes vs. verification</p></div><div class="chart-legend"><span><i class="dot dot-orange"></i> Found</span><span><i class="dot dot-blue"></i> Fixed</span><span><i class="dot dot-green"></i> Verified</span></div></div><div id="chart" class="chart-wrap"></div><div class="trend-row"><div class="trend-icon">↗</div><div><strong id="trend-title">No rounds recorded</strong><p id="trend-desc">Create your first report to begin the QA timeline.</p></div></div><div class="chart-footnote" id="chart-footnote">Found is attributed to the discovery round. Fixed and verified use the round of the recorded transition.</div></section></div></section>
-<section id="tickets" class="tickets-section"><div class="section-head"><div><span class="eyebrow">03 / TICKET REGISTER</span><h2>Every issue. Accounted for.</h2></div><span class="tiny-badge" id="ticket-count">0 TICKETS</span></div><div class="filters"><input id="search" type="search" placeholder="Search issues, IDs, reporters, areas…" aria-label="Search tickets"><select id="status-filter" aria-label="Filter by status"><option value="">All statuses</option></select><select id="severity-filter" aria-label="Filter by severity"><option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select><select id="round-filter" aria-label="Filter by round"><option value="">All rounds</option></select></div><div class="table-scroll"><table><thead><tr><th>ISSUE</th><th>STATUS</th><th>SEVERITY</th><th>CATEGORY</th><th>ROUND</th><th>REPORTED BY</th><th>CREATED</th></tr></thead><tbody id="ticket-rows"></tbody></table></div><div id="empty" class="empty hidden">No matching reports. Create a ticket or adjust the filters.</div></section>
-<footer>PERPERIS QA <span>Independent quality control workspace · Prototype v0.1</span></footer></main></div>
-<div id="modal" class="modal-overlay hidden"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-top"><div><span class="eyebrow" id="modal-eyebrow">ISSUE INTAKE</span><h2 id="modal-title">Report a bug</h2></div><button class="close" id="modal-close" aria-label="Close">×</button></div><form id="ticket-form"><div id="create-fields"><label>Issue title *<input name="title" required minlength="3" maxlength="180" placeholder="What is not working?"></label><label>What happened?<textarea name="description" rows="4" placeholder="Steps to reproduce, expected result, actual result"></textarea></label><div class="form-grid"><label>Reported by *<input name="reporter" required value="Product Owner"></label><label>Testing round *<input name="testing_round" required placeholder="R04"></label><label>Severity<select name="severity"><option>medium</option><option>low</option><option>high</option><option>critical</option></select></label><label>Category<select name="category"><option value="ui_ux">UI / UX</option><option value="workout">Workout</option><option value="coach_ai">Coach / AI</option><option value="mobile">Mobile</option><option value="data">Data</option><option value="deployment">Deployment</option><option value="auth">Auth</option><option value="performance">Performance</option><option value="other">Other</option></select></label><label>Area / screen<input name="area" placeholder="Today, Coach, Program…"></label><label>Deploy version<input name="deploy_version" placeholder="Deploy #21"></label><label>Environment<input name="environment" value="production"></label><label>GitHub issue URL<input name="issue_url" type="url" placeholder="https://github.com/…"></label></div></div><div id="update-fields" class="hidden"><div id="ticket-detail" class="detail-text"></div><div class="form-grid"><label>Status<select name="status" id="edit-status"></select></label><label>Responsible<input name="assigned_to" placeholder="Assignee"></label><label>Resolved / verified in round<input name="resolution_round" placeholder="R05"></label></div><label>Resolution notes<textarea name="resolution_notes" rows="4" placeholder="What changed? What was verified?"></textarea></label></div><section id="screenshot-controls" class="hidden"><h3>Private screenshots</h3><label>Select screenshots<input id="screenshot-input" type="file" accept="image/png,image/jpeg,image/webp" multiple></label><div id="screenshot-drop" tabindex="0" class="screenshot-drop">Paste a screenshot here, drag files here, or use the file picker. Up to 10 images, 10 MiB each.</div><p id="screenshot-status" class="error" role="status"></p><div id="screenshot-queue"></div><div id="screenshot-existing"></div></section><div id="form-error" class="error"></div><div class="modal-actions"><button type="button" class="secondary" id="modal-cancel">Cancel</button><button type="submit" class="primary" id="form-submit">Create report</button></div></form></div></div>
-<div id="members-panel" class="modal-overlay hidden"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="members-title"><h2 id="members-title">QA membership</h2><p>Approve verified accounts and assign roles.</p><div id="members-list"></div><p id="members-error" class="error" role="status"></p><button id="members-close" class="secondary">Close</button></section></div><script src="/static/auth.js"></script><script src="/static/attachments.js"></script><script src="/static/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PERPERIS / QA</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<div id="login" class="login hidden">
+  <div class="login-inner">
+    <p class="eyebrow">PERPERIS / INTERNAL</p>
+    <h1 class="page-title">QA</h1>
+    <form id="login-form">
+      <label class="field hidden" id="email-label">Email
+        <input type="email" id="email" autocomplete="username">
+      </label>
+      <label class="field">Password
+        <input type="password" id="password" required autocomplete="current-password">
+      </label>
+      <button class="btn btn-primary btn-block primary">Enter workspace</button>
+      <div id="identity-actions" class="login-actions hidden">
+        <button type="button" class="btn btn-ink" id="register">Create verified account</button>
+        <button type="button" class="text-btn" id="reset-password">Reset password</button>
+      </div>
+      <p id="login-error" class="error" role="status"></p>
+    </form>
+  </div>
+</div>
+
+<div id="workspace" class="app hidden">
+
+  <aside class="sidebar" aria-label="Sidebar">
+    <div class="brand"><span>PERPERIS</span><i aria-hidden="true">/</i><span>QA</span></div>
+    <div class="side-action"><button type="button" class="btn btn-primary btn-block" id="new-ticket" data-new-ticket>＋ New bug</button></div>
+    <nav aria-label="Primary" class="nav">
+      <a class="nav-link" href="#today" data-view="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>Today</a>
+      <a class="nav-link" href="#tickets" data-view="tickets"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Tickets<b id="nav-count" class="nav-count" aria-label="open tickets">0</b></a>
+      <p class="nav-group">Next milestones</p>
+      <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Workspace<em>Next</em></span>
+      <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/></svg>Testing rounds<em>Next</em></span>
+      <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16v-3M12 16V8M17 16v-6"/></svg>Analytics<em>Next</em></span>
+    </nav>
+    <nav aria-label="Account" class="nav nav-account">
+      <p class="nav-group">Account</p>
+      <button class="nav-link nav-button hidden" id="manage-members" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Members</button>
+      <p class="nav-who" id="who"></p>
+      <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg>Settings<em>Next</em></span>
+      <button class="nav-link nav-button" id="logout" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>Sign out</button>
+    </nav>
+  </aside>
+
+  <div class="topbar" aria-label="Top bar">
+    <div class="brand"><span>PERPERIS</span><i aria-hidden="true">/</i><span>QA</span></div>
+    <div class="topbar-actions">
+      <button class="text-btn hidden" id="manage-members-mobile" type="button">Members</button>
+      <button class="text-btn" id="logout-mobile" type="button">Sign out</button>
+    </div>
+  </div>
+
+  <main class="main" id="main">
+
+    <p id="load-error" class="banner banner-error hidden" role="alert">
+      <span id="load-error-text">Unable to load QA data.</span>
+      <button class="btn btn-ink btn-small" id="retry" type="button">Retry</button>
+    </p>
+
+    <!-- TODAY -->
+    <section id="view-today" class="view" aria-labelledby="today-title">
+      <header class="title-block">
+        <h1 class="page-title" id="today-title">Today</h1>
+        <div class="title-labels" id="today-labels" aria-live="polite"></div>
+      </header>
+
+      <div class="rounds" id="round-strip" role="group" aria-label="Testing round"></div>
+
+      <section class="hero hero-empty" id="hero" aria-live="polite">
+        <div>
+          <p class="eyebrow">01 / Quality</p>
+          <h2 id="hero-title">Loading QA data…</h2>
+          <p id="hero-sub" class="hero-sub"></p>
+        </div>
+        <button class="btn btn-hero" type="button" data-new-ticket>Report a bug</button>
+      </section>
+
+      <div class="workspace">
+        <div class="col-main">
+          <section class="block" aria-labelledby="h-quick">
+            <p class="eyebrow">02 / Discovery</p>
+            <h2 class="block-title" id="h-quick">Quick report</h2>
+            <form id="quick-form" class="quick">
+              <label class="field">Title
+                <input name="q_title" id="q-title" required minlength="3" maxlength="180" placeholder="REPORT A BUG. WHAT IS NOT WORKING?" autocomplete="off">
+              </label>
+              <label class="field">Steps, expected, actual
+                <textarea name="q_description" id="q-description" rows="3" maxlength="10000" placeholder="1. …  Expected: …  Actual: …"></textarea>
+              </label>
+              <div class="quick-row">
+                <label class="field">Severity
+                  <select name="q_severity" id="q-severity"><option>medium</option><option>low</option><option>high</option><option>critical</option></select>
+                </label>
+                <label class="field">Round
+                  <input name="q_round" id="q-round" required maxlength="48" placeholder="R05">
+                </label>
+                <label class="field">Reported by
+                  <input name="q_reporter" id="q-reporter" required maxlength="100" autocomplete="off">
+                </label>
+              </div>
+              <p id="quick-error" class="error" role="alert"></p>
+              <div class="quick-actions">
+                <button type="button" class="btn btn-ink" id="quick-details">Add details</button>
+                <button type="submit" class="btn btn-primary" id="quick-submit">Report bug</button>
+              </div>
+              <p class="note" id="quick-note">Plain form. No AI.</p>
+            </form>
+          </section>
+
+          <section class="block" aria-labelledby="h-activity">
+            <h2 class="block-title" id="h-activity">Recent activity</h2>
+            <p class="note">Latest ticket updates, newest first.</p>
+            <ul class="activity" id="activity"></ul>
+          </section>
+        </div>
+
+        <div class="col-side">
+          <section class="block" aria-labelledby="h-metrics">
+            <p class="eyebrow">03 / Resolution</p>
+            <h2 class="block-title" id="h-metrics">Engineering metrics</h2>
+            <dl class="metrics" id="metrics"></dl>
+          </section>
+
+          <section class="block" aria-labelledby="h-round">
+            <h2 class="block-title" id="h-round">Round</h2>
+            <div id="round-panel"></div>
+          </section>
+
+          <section class="block" aria-labelledby="h-trend">
+            <div class="block-head">
+              <h2 class="block-title" id="h-trend">Discovery vs fixes</h2>
+              <label class="check"><input type="checkbox" id="show-backlog"> Show backlog</label>
+            </div>
+            <ul class="legend" aria-hidden="true">
+              <li><svg viewBox="0 0 36 12"><line class="s-found" x1="0" y1="6" x2="36" y2="6"/><circle class="m-found" cx="18" cy="6" r="4"/></svg>Found</li>
+              <li><svg viewBox="0 0 36 12"><line class="s-fixed" x1="0" y1="6" x2="36" y2="6"/><rect class="m-fixed" x="14" y="2" width="8" height="8"/></svg>Fixed</li>
+              <li><svg viewBox="0 0 36 12"><line class="s-verified" x1="0" y1="6" x2="36" y2="6"/><path class="m-verified" d="M18 1l5 10h-10z"/></svg>Verified</li>
+              <li id="legend-backlog" class="hidden"><svg viewBox="0 0 36 12"><line class="s-backlog" x1="0" y1="6" x2="36" y2="6"/></svg>Backlog</li>
+            </ul>
+            <div id="chart" class="chart" tabindex="0" aria-label="Chart: bugs found, fixed and verified per testing round"></div>
+            <p class="note" id="chart-note"></p>
+          </section>
+
+          <section class="block" aria-labelledby="h-sev">
+            <h2 class="block-title" id="h-sev">Severity</h2>
+            <div id="severity" class="bars"></div>
+          </section>
+
+          <section class="block" aria-labelledby="h-flow">
+            <h2 class="block-title" id="h-flow">Ticket flow</h2>
+            <div id="flow" class="bars"></div>
+          </section>
+
+          <section class="block" aria-labelledby="h-attn">
+            <h2 class="block-title" id="h-attn">Needs attention</h2>
+            <ul class="attention" id="attention"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- TICKETS -->
+    <section id="view-tickets" class="view hidden" aria-labelledby="tickets-title">
+      <header class="title-block">
+        <h1 class="page-title" id="tickets-title">Tickets</h1>
+        <div class="title-labels" id="tickets-labels"></div>
+      </header>
+      <div class="filters">
+        <input id="search" type="search" placeholder="SEARCH TICKETS" aria-label="Search tickets">
+        <select id="status-filter" aria-label="Filter by status"><option value="">All statuses</option></select>
+        <select id="severity-filter" aria-label="Filter by severity"><option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select>
+        <select id="round-filter" aria-label="Filter by round"><option value="">All rounds</option></select>
+      </div>
+      <table class="register">
+        <caption class="sr-only">Tickets matching the filters</caption>
+        <thead><tr class="rows-head"><th scope="col">No.</th><th scope="col">Ticket</th><th scope="col">Status</th><th scope="col">Severity</th><th scope="col">Assignee</th><th scope="col">Round</th><th scope="col">Updated</th></tr></thead>
+        <tbody class="rows" id="ticket-rows"></tbody>
+      </table>
+      <p id="empty" class="empty hidden">No matching tickets. Report a bug or adjust the filters.</p>
+    </section>
+
+    <footer class="foot">PERPERIS QA · Prototype · Independent of the PERPERIS training app</footer>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Mobile">
+    <a href="#today" data-view="today">Today</a>
+    <button type="button" class="bottom-new" data-new-ticket>＋ New bug</button>
+    <a href="#tickets" data-view="tickets">Tickets</a>
+  </nav>
+</div>
+
+<div id="modal" class="modal-overlay hidden">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-top">
+      <div><p class="eyebrow" id="modal-eyebrow">Issue intake</p><h2 id="modal-title">Report a bug</h2></div>
+      <button class="close" id="modal-close" aria-label="Close" type="button">×</button>
+    </div>
+    <form id="ticket-form">
+      <div id="create-fields">
+        <label class="field">Issue title *<input name="title" required minlength="3" maxlength="180" placeholder="What is not working?"></label>
+        <label class="field">What happened?<textarea name="description" rows="4" placeholder="Steps to reproduce, expected result, actual result"></textarea></label>
+        <div class="form-grid">
+          <label class="field">Reported by *<input name="reporter" required></label>
+          <label class="field">Testing round *<input name="testing_round" required placeholder="R04"></label>
+          <label class="field">Severity<select name="severity"><option>medium</option><option>low</option><option>high</option><option>critical</option></select></label>
+          <label class="field">Category<select name="category"><option value="ui_ux">UI / UX</option><option value="workout">Workout</option><option value="coach_ai">Coach / AI</option><option value="mobile">Mobile</option><option value="data">Data</option><option value="deployment">Deployment</option><option value="auth">Auth</option><option value="performance">Performance</option><option value="other">Other</option></select></label>
+          <label class="field">Area / screen<input name="area" placeholder="Today, Coach, Program…"></label>
+          <label class="field">Deploy version<input name="deploy_version" placeholder="Deploy #21"></label>
+          <label class="field">Environment<input name="environment" value="production"></label>
+          <label class="field">GitHub issue URL<input name="issue_url" type="url" placeholder="https://github.com/…"></label>
+        </div>
+      </div>
+      <div id="update-fields" class="hidden">
+        <div id="ticket-detail" class="detail-text"></div>
+        <div class="form-grid">
+          <label class="field">Status<select name="status" id="edit-status"></select></label>
+          <label class="field">Responsible<input name="assigned_to" placeholder="Assignee"></label>
+          <label class="field">Resolved / verified in round<input name="resolution_round" placeholder="R05"></label>
+        </div>
+        <label class="field">Resolution notes<textarea name="resolution_notes" rows="4" placeholder="What changed? What was verified?"></textarea></label>
+      </div>
+      <section id="screenshot-controls" class="shots hidden" aria-labelledby="shots-title">
+        <h3 class="shots-title" id="shots-title">Private screenshots</h3>
+        <label class="field">Select screenshots<input id="screenshot-input" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
+        <div id="screenshot-drop" tabindex="0" class="screenshot-drop">Paste a screenshot here, drag files here, or use the file picker. Up to 10 images, 10 MiB each.</div>
+        <p id="screenshot-status" class="error" role="status"></p>
+        <div id="screenshot-queue"></div>
+        <div id="screenshot-existing"></div>
+      </section>
+      <p id="form-error" class="error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ink" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="form-submit">Create report</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="members-panel" class="modal-overlay hidden">
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="members-title">
+    <div class="modal-top">
+      <div><p class="eyebrow">Account</p><h2 id="members-title">QA membership</h2></div>
+    </div>
+    <p class="note">Approve verified accounts and assign roles. A member must sign in again after a change.</p>
+    <div id="members-list" class="members"></div>
+    <p id="members-error" class="error" role="status"></p>
+    <div class="modal-actions"><button id="members-close" type="button" class="btn btn-ink">Close</button></div>
+  </section>
+</div>
+
+<script src="/static/auth.js"></script>
+<script src="/static/attachments.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
