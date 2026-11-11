@@ -213,7 +213,7 @@
           <label class="field">Testing round *<input name="testing_round" required placeholder="R04"></label>
           <label class="field">Severity<select name="severity"><option>medium</option><option>low</option><option>high</option><option>critical</option></select></label>
           <label class="field">Category<select name="category"><option value="ui_ux">UI / UX</option><option value="workout">Workout</option><option value="coach_ai">Coach / AI</option><option value="mobile">Mobile</option><option value="data">Data</option><option value="deployment">Deployment</option><option value="auth">Auth</option><option value="performance">Performance</option><option value="other">Other</option></select></label>
-          <label class="field">Area / screen<input name="area" placeholder="Today, Coach, Program…"></label>
+          <label class="field">Area / screen<input name="area" list="area-options" placeholder="Today, Coach, Library…"></label><datalist id="area-options"><option value="Today"><option value="Coach"><option value="Workouts"><option value="Library"><option value="Training mode"><option value="Progress"><option value="Settings"><option value="Admin"><option value="Auth"></datalist>
           <label class="field">Deploy version<input name="deploy_version" placeholder="Deploy #21"></label>
           <label class="field">Environment<input name="environment" value="production"></label>
           <label class="field">GitHub issue URL<input name="issue_url" type="url" placeholder="https://github.com/…"></label>
