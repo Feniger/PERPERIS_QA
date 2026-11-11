@@ -37,10 +37,18 @@ STATUS_LABELS = (
 NOT_FIXED_REASONS = {'not_planned', 'duplicate'}
 REPORTED_BY = re.compile(r'^Reported by (.{1,100}?) via PERPERIS QA\s*$', re.MULTILINE)
 MAX_PAGES = 20
+# Area labels created in the repository (owner-approved list, 2026-11-11).
+AREAS = ('today', 'coach', 'workouts', 'library', 'training-mode', 'progress', 'settings', 'admin', 'auth')
+EMPTY = '—'
+DESCRIPTION = re.compile(r'^### Description[ \t]*\n(.*?)(?=\n---\nReported by |\Z)', re.MULTILINE | re.DOTALL)
 
 
 class GitHubUnavailable(RuntimeError):
     """GitHub could not be read. The message never contains credentials."""
+
+
+class InvalidReport(ValueError):
+    """A report that cannot become an issue as given (message is safe to show)."""
 
 
 @dataclass(frozen=True)
@@ -113,7 +121,37 @@ def round_at(ts: float | None, rounds: list[tuple[float, str]], fallback: str) -
 
 def _section(body: str, heading: str) -> str:
     match = re.search(rf'^#+\s*{heading}\s*$\n+(.+)$', body, re.MULTILINE | re.IGNORECASE)
-    return match.group(1).strip()[:70] if match else ''
+    value = match.group(1).strip()[:70] if match else ''
+    return '' if value == EMPTY else value
+
+
+def _description(body: str) -> str:
+    """The free-text part of a QA-created issue; the whole body for issues made elsewhere."""
+    match = DESCRIPTION.search(body)
+    return match.group(1).strip() if match else body
+
+
+def neutralize(text: str) -> str:
+    """Stop user text from pinging GitHub users or teams (@name) when the App posts it."""
+    return text.replace('@', '@\u200b')
+
+
+def area_label(area: str) -> str | None:
+    slug = re.sub(r'[\s_]+', '-', area.strip().lower())
+    return f'area:{slug}' if slug in AREAS else None
+
+
+def issue_body(*, description: str, environment: str, deploy_version: str, category: str,
+               area: str, reporter: str) -> str:
+    """The fixed issue template. Structured fields come first so free text cannot shadow them."""
+    one_line = lambda value: neutralize(' '.join(value.split())) or EMPTY
+    parts = [f'### Environment\n{one_line(environment)}', f'### Deploy\n{one_line(deploy_version)}',
+             f'### Category\n{one_line(category)}']
+    if area and not area_label(area):
+        parts.append(f'### Area\n{one_line(area)}')
+    parts.append(f'### Description\n{neutralize(description.strip()) or "_No description._"}')
+    parts.append(f'---\nReported by {one_line(reporter)} via PERPERIS QA')
+    return '\n\n'.join(parts) + '\n'
 
 
 def _timeline(events: list[dict]):
@@ -178,13 +216,14 @@ def to_ticket(issue: dict, events: list[dict], rounds: list[tuple[float, str]]) 
 
     severity = next((s for s in SEVERITIES if f'sev:{s}' in labels), 'unset')
     area = next((name.split(':', 1)[1] for name in sorted(labels) if name.startswith('area:')), '')
-    reporter_match = REPORTED_BY.search(body)
-    reporter = reporter_match.group(1).strip() if reporter_match else (issue.get('user') or {}).get('login', '')
+    # The App appends the reporter line last; the last match wins so text above cannot spoof it.
+    reporter_matches = REPORTED_BY.findall(body)
+    reporter = reporter_matches[-1].strip() if reporter_matches else (issue.get('user') or {}).get('login', '')
     assignees = ', '.join(a.get('login', '') for a in issue.get('assignees') or [])
     return {
         'id': issue['number'],
         'title': issue.get('title', ''),
-        'description': body,
+        'description': _description(body),
         'reporter': reporter,
         'category': 'task' if 'task' in labels else 'bug' if 'bug' in labels else 'other',
         'severity': severity,
@@ -290,10 +329,12 @@ class GitHubIssues:
         issues = [i for i in self._get_all(f'/repos/{repo}/issues', {
             'labels': 'qa', 'state': 'all', 'per_page': 100, 'sort': 'created', 'direction': 'desc'})
             if 'pull_request' not in i]
-        rounds = testing_rounds(self._get_all(f'/repos/{repo}/milestones', {'state': 'all', 'per_page': 100}))
+        milestones = self._get_all(f'/repos/{repo}/milestones', {'state': 'all', 'per_page': 100})
+        rounds = testing_rounds(milestones)
         events = {i['number']: self._get_all(f'/repos/{repo}/issues/{i["number"]}/events', {'per_page': 100})
                   for i in issues}
-        return {'issues': {i['number']: i for i in issues}, 'events': events,
+        return {'issues': {i['number']: i for i in issues}, 'events': events, 'milestones': milestones,
+                'rounds': rounds,
                 'tickets': [to_ticket(i, events[i['number']], rounds) for i in issues]}
 
     def snapshot(self) -> dict:
@@ -303,6 +344,50 @@ class GitHubIssues:
             data = self._load()
             self._snapshot = (self.clock(), data)
             return data
+
+    def invalidate(self):
+        with self._lock:
+            self._snapshot = None
+
+    def open_rounds(self) -> list[str]:
+        """Open testing-round milestones, oldest first (the last one is the current round)."""
+        opened = [m for m in self.snapshot()['milestones'] if m.get('state') == 'open' and ROUND_PATTERN.match(m.get('title', ''))]
+        return [m['title'] for m in sorted(opened, key=lambda m: parse_time(m.get('created_at')) or 0)]
+
+    def _milestone_number(self, title: str) -> int | None:
+        for attempt in range(2):
+            for m in self.snapshot()['milestones']:
+                if m.get('title') == title and m.get('state') == 'open' and ROUND_PATTERN.match(title):
+                    return m['number']
+            if attempt == 0:
+                self.invalidate()  # a round opened in the last minute is not in the cache yet
+        return None
+
+    def create_issue(self, *, title: str, description: str, severity: str, category: str, testing_round: str,
+                     area: str, environment: str, deploy_version: str, reporter: str) -> dict:
+        """Create one QA issue (label `qa`, `bug`, `sev:*`, optional `area:*`, round milestone)."""
+        if severity not in SEVERITIES:
+            raise InvalidReport('Choose a severity: critical, high, medium or low')
+        number = self._milestone_number(testing_round.strip())
+        if number is None:
+            known = ', '.join(self.open_rounds()) or 'none yet'
+            raise InvalidReport(f'Round "{testing_round.strip()}" is not an open testing round on GitHub (open: {known})')
+        labels = ['qa', 'bug', f'sev:{severity}']
+        if area_label(area):
+            labels.append(area_label(area))
+        payload = {'title': neutralize(' '.join(title.split())), 'labels': labels, 'milestone': number,
+                   'body': issue_body(description=description, environment=environment, deploy_version=deploy_version,
+                                      category=category, area=area, reporter=reporter)}
+        headers = {'Authorization': f'token {self._installation_token()}'}
+        try:
+            response = self._client.post(f'/repos/{self.config.repo}/issues', json=payload, headers=headers)
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if response.status_code != 201:
+            raise GitHubUnavailable(f'GitHub issue creation failed ({response.status_code})')
+        self.invalidate()
+        created = response.json()
+        return to_ticket(created, [], testing_rounds(self.snapshot()['milestones']))
 
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']

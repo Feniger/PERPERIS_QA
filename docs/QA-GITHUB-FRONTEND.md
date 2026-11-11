@@ -141,9 +141,41 @@ Tickets come from GitHub when `PERPERIS_QA_TICKET_SOURCE=github`; the default
 | `PERPERIS_QA_GITHUB_REPO` | default `krummb/kattens-pt` |
 | `PERPERIS_QA_GITHUB_PRIVATE_KEY` or `..._PRIVATE_KEY_FILE` | the App private key (**secret**: Secret Manager in staging; never in Git, logs or chat) |
 
-Reads are cached for 60 seconds. In milestone 1 GitHub mode is read-only:
-creating or changing tickets returns 405, screenshots are off, and the UI shows
-issue numbers (`#12`) with a link to GitHub. Sign-in, roles and members are
+Reads are cached for 60 seconds (a report clears the cache). The UI shows
+issue numbers (`#12`) with a link to GitHub.
+
+**Reporting (milestone 2).** "Report a bug" creates the issue as
+`perperis-qa[bot]` with labels `qa`, `bug`, `sev:<severity>` and `area:<name>`
+when the area matches an area label, and the chosen round's milestone. The
+round must be an **open** `R##` milestone; anything else is refused with the
+list of open rounds, and the form defaults to the newest open round. The body
+uses a fixed template, structured fields first so free text cannot shadow them:
+
+```
+### Environment
+<environment or —>
+
+### Deploy
+<deploy number or —>
+
+### Category
+<category>
+
+### Area            (only when the area is not an area: label)
+<area>
+
+### Description
+<free text>
+
+---
+Reported by <member name> via PERPERIS QA
+```
+
+`@` in user text is neutralised so a report cannot ping GitHub users, and the
+last "Reported by" line wins, so text above it cannot impersonate a reporter.
+In managed sign-in the reporter is the signed-in member; in local mode, the
+typed name. Status changes from QA still return 405 until milestone 3, and
+screenshots stay off in GitHub mode (see milestone 2 below). Sign-in, roles and members are
 unchanged (still database-backed until the identity rework).
 
 ## 5. Suggested milestones
@@ -160,9 +192,13 @@ PR; merging follows the rule in section 6.
    issue reads (labels, milestones, timeline). Dashboard and ticket list show
    real `kattens-pt` issues labeled `qa`. Owner registers and installs the
    GitHub App; labels and milestones get created in `kattens-pt`.
-2. **Report**: "New bug" creates issues (title, body template, labels,
-   milestone, reporter line); screenshots keep using the existing private
-   bucket per decision 4.1.
+2. **Report** (built 2026-11-11): "New bug" creates issues (title, body
+   template, labels, milestone, reporter line). **Screenshots moved to the
+   no-database rework:** their records live in database rows tied to the old
+   ticket table, so attaching them to issue numbers now would need a migration
+   that the rework removes again. When identity/sessions leave the database,
+   screenshots move to bucket objects keyed by issue number (still decision
+   4.1: private bucket, linked from the issue).
 3. **Close the loop**: Triage / Verify / Reopen actions in QA; a separate PR
    in `kattens-pt` adds the `status:deployed` + "Live in Deploy #N" step to
    `deploy-cloud-run`; webhooks for live updates.

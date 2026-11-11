@@ -78,7 +78,7 @@ window.addEventListener('hashchange',route);
 
 /* ---------- derived, deterministic figures ---------- */
 const criticalOpen = () => tickets.filter(t=>t.severity==='critical' && !DONE.includes(t.status));
-function latestRound(){return analytics?.rounds?.at(-1)?.round || null;}
+function latestRound(){return analytics?.current_round || analytics?.rounds?.at(-1)?.round || null;}
 function activeRound(){
   const rounds=(analytics?.rounds||[]).map(r=>r.round);
   return rounds.includes(selectedRound)?selectedRound:latestRound();
@@ -222,13 +222,10 @@ function applyIdentityToQuick(){
   const r=$('q-reporter');r.readOnly=managed();if(managed()||!r.value) r.value=defaultReporter();
   $('quick-note').textContent=qaScreenshots.enabled()?'Plain form. No AI. To attach screenshots, use Add details.':'Plain form. No AI. Screenshots are switched off on this server.';
 }
-/* Read-only while tickets come from GitHub: reporting and status changes return in the next milestone. */
+/* GitHub mode: reports become GitHub issues; status changes return in the next milestone (detail is read-only). */
 function applyTicketSource(){
-  const readOnly=githubMode();
-  const why=readOnly?`Tickets are GitHub issues in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}. Reporting from QA comes in the next milestone; report on GitHub for now.`:'';
-  ['quick-submit','quick-details'].forEach(id=>{$(id).disabled=readOnly;$(id).title=why;});
-  document.querySelectorAll('[data-new-ticket]').forEach(b=>{b.disabled=readOnly;b.title=why;});
-  if(readOnly) $('quick-note').textContent=why;
+  if(!githubMode()) return;
+  $('quick-note').textContent=`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI. Screenshots come in a later milestone.`;
 }
 function prefillQuick(){
   if(!$('q-reporter').value) $('q-reporter').value=defaultReporter();
@@ -257,6 +254,8 @@ function setDialogMode(create){
 function newTicket(prefill={}){
   editing=null;const form=$('ticket-form');form.reset();setDialogMode(true);
   $('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.remove('hidden');
+  /* In GitHub mode the report IS the issue, so a separate GitHub link field makes no sense. */
+  const urlField=$('ticket-form').elements.issue_url;urlField.closest('label').classList.toggle('hidden',githubMode());urlField.disabled=githubMode();
   $('modal-eyebrow').textContent='Issue intake';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';
   qaScreenshots.reset();
   form.elements.reporter.readOnly=managed();

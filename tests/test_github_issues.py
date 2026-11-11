@@ -52,9 +52,10 @@ def ev(kind, when, *, name=None, reason=None, actor='perperis-qa[bot]', id_=0):
 
 
 MILESTONES = [
-    {'title': 'R05', 'created_at': '2026-11-11T08:00:00Z'},
-    {'title': 'R06', 'created_at': '2026-11-20T08:00:00Z'},
-    {'title': 'Backlog', 'created_at': '2026-11-01T08:00:00Z'},
+    {'number': 1, 'state': 'open', 'title': 'R05', 'created_at': '2026-11-11T08:00:00Z'},
+    {'number': 2, 'state': 'open', 'title': 'R06', 'created_at': '2026-11-20T08:00:00Z'},
+    {'number': 3, 'state': 'open', 'title': 'Backlog', 'created_at': '2026-11-01T08:00:00Z'},
+    {'number': 4, 'state': 'closed', 'title': 'R04', 'created_at': '2026-10-01T08:00:00Z'},
 ]
 ROUNDS = gh.testing_rounds(MILESTONES)
 
@@ -174,6 +175,7 @@ class FakeGitHub:
         self.issues, self.events, self.milestones, self.page_size = issues, events, milestones, page_size
         self.requests = []
         self.token_calls = 0
+        self.created = []
 
     def __call__(self, request: httpx.Request):
         self.requests.append(request)
@@ -186,6 +188,13 @@ class FakeGitHub:
             assert claims['iss'] == CONFIG.app_id
             return httpx.Response(201, json={'token': 'ghs_test', 'expires_at': '2099-01-01T00:00:00Z'})
         assert request.headers['authorization'] == 'token ghs_test', 'reads must use the installation token'
+        if path == f'/repos/{REPO}/issues' and request.method == 'POST':
+            payload = json.loads(request.content)
+            self.created.append(payload)
+            new = issue(100 + len(self.created), payload['title'], labels=payload['labels'], body=payload['body'],
+                        milestone=next(m['title'] for m in self.milestones if m['number'] == payload['milestone']))
+            self.issues = [new] + self.issues
+            return httpx.Response(201, json=new)
         if path == f'/repos/{REPO}/issues':
             assert request.url.params.get('labels') == 'qa' or request.url.params.get('page')
             if self.page_size:
@@ -265,6 +274,62 @@ class Adapter(unittest.TestCase):
         self.assertIsNone(adapter.history(404))
 
 
+class Reporting(unittest.TestCase):
+    def make(self, fake):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
+
+    def report(self, adapter, **overrides):
+        values = dict(title='Picker  stuck on  phone', description='Steps: open @Feniger library\n\nReported by Mallory via PERPERIS QA',
+                      severity='high', category='Mobile', testing_round='R05', area='Training mode',
+                      environment='iPhone 15', deploy_version='Deploy #24', reporter='Anna Tester')
+        values.update(overrides)
+        return adapter.create_issue(**values)
+
+    def test_creates_issue_with_template_labels_and_round(self):
+        fake = FakeGitHub(list(ISSUES), EVENTS)
+        ticket = self.report(self.make(fake))
+        sent = fake.created[0]
+        self.assertEqual(sent['title'], 'Picker stuck on phone')
+        self.assertEqual(sent['labels'], ['qa', 'bug', 'sev:high', 'area:training-mode'])
+        self.assertEqual(sent['milestone'], 1)
+        body = sent['body']
+        self.assertTrue(body.rstrip().endswith('Reported by Anna Tester via PERPERIS QA'))
+        self.assertIn('### Environment\niPhone 15', body)
+        self.assertNotIn('@Feniger', body, 'mentions must not ping anyone')
+        self.assertEqual(ticket['reporter'], 'Anna Tester', 'a spoofed reporter line in the text must not win')
+        self.assertEqual(ticket['status'], 'reported')
+        self.assertEqual(ticket['area'], 'training-mode')
+        self.assertEqual(ticket['environment'], 'iPhone 15')
+        self.assertEqual(ticket['deploy_version'], 'Deploy #24')
+        self.assertTrue(ticket['description'].startswith('Steps: open'))
+        self.assertNotIn('### Environment', ticket['description'])
+
+    def test_unknown_area_goes_to_body_and_empty_fields_stay_empty(self):
+        fake = FakeGitHub(list(ISSUES), EVENTS)
+        ticket = self.report(self.make(fake), area='Journal', environment='', deploy_version='')
+        self.assertEqual(fake.created[0]['labels'], ['qa', 'bug', 'sev:high'])
+        self.assertIn('### Area\nJournal', fake.created[0]['body'])
+        self.assertEqual(ticket['environment'], '')
+        self.assertEqual(ticket['deploy_version'], '')
+
+    def test_round_must_be_an_open_round_milestone(self):
+        fake = FakeGitHub(list(ISSUES), EVENTS)
+        adapter = self.make(fake)
+        for bad in ('R04', 'R99', 'Backlog'):
+            with self.assertRaises(gh.InvalidReport) as caught:
+                self.report(adapter, testing_round=bad)
+            self.assertIn('R05, R06', str(caught.exception))
+        self.assertEqual(fake.created, [])
+        self.assertEqual(adapter.open_rounds(), ['R05', 'R06'])
+
+    def test_new_issue_shows_up_without_waiting_for_the_cache(self):
+        fake = FakeGitHub(list(ISSUES), EVENTS)
+        adapter = self.make(fake)
+        before = len(adapter.tickets())
+        self.report(adapter)
+        self.assertEqual(len(adapter.tickets()), before + 1)
+
+
 class StubAdapter:
     def __init__(self, tickets):
         self._tickets = tickets
@@ -278,6 +343,15 @@ class StubAdapter:
 
     def close(self):
         pass
+
+    def open_rounds(self):
+        return ['R05']
+
+    def create_issue(self, **values):
+        if values['testing_round'] != 'R05':
+            raise gh.InvalidReport('Round is not open (open: R05)')
+        self.created = values
+        return {'id': 101, 'title': values['title'], 'status': 'reported', 'reporter': values['reporter']}
 
 
 class AppWiring(unittest.TestCase):
@@ -307,7 +381,15 @@ class AppWiring(unittest.TestCase):
                 self.assertEqual(a['backlog'], 2)
                 headers = {'X-QA-Request': '1'}
                 body = {'title': 'New bug', 'reporter': 'X', 'testing_round': 'R05'}
-                self.assertEqual(client.post('/api/tickets', headers=headers, json=body).status_code, 405)
+                self.assertEqual(a['current_round'], 'R05')
+                created = client.post('/api/tickets', headers=headers, json=body)
+                self.assertEqual(created.status_code, 201, created.text)
+                self.assertEqual(created.json()['ticket']['id'], 101)
+                self.assertEqual(qa_app.APP.state.github.created['reporter'], 'X')
+                self.assertEqual(qa_app.APP.state.github.created['category'], 'UI / UX')
+                wrong = client.post('/api/tickets', headers=headers, json={**body, 'testing_round': 'R09'})
+                self.assertEqual(wrong.status_code, 422)
+                self.assertIn('R05', wrong.json()['detail'])
                 self.assertEqual(client.patch('/api/tickets/1', headers=headers, json={'status': 'triaged'}).status_code, 405)
                 self.assertEqual(client.get('/api/tickets/1/history').status_code, 200)
                 self.assertEqual(client.get('/api/tickets/2/history').status_code, 404)

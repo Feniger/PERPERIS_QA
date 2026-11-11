@@ -170,8 +170,11 @@ def github():
     return getattr(APP.state, 'github', None)
 
 
-GITHUB_READ_ONLY = ('Tickets are GitHub issues. Reporting and status changes from QA arrive in the '
-                    'next milestone; use GitHub for now.')
+GITHUB_READ_ONLY = ('Tickets are GitHub issues. Status changes from QA arrive in the next milestone; '
+                    'use GitHub for now.')
+CATEGORY_NAMES = {'ui_ux': 'UI / UX', 'workout': 'Workout', 'coach_ai': 'Coach / AI', 'data': 'Data',
+                  'performance': 'Performance', 'mobile': 'Mobile', 'auth': 'Sign-in', 'deployment': 'Deployment',
+                  'other': 'Other'}
 
 
 def github_tickets(source):
@@ -194,10 +197,10 @@ def tickets(user:identity.Principal=Depends(current_user)):
 
 @APP.post('/api/tickets',status_code=201)
 def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mutation)):
-    if github():
-        raise HTTPException(405, GITHUB_READ_ONLY)
     validate_enum(payload.category,VALID_CATEGORY,'category')
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
+    if github():
+        return create_github_ticket(payload, user)
     dt=now()
     with connection(write=True) as db:
         identity.authorize_member(db, user)
@@ -209,6 +212,25 @@ def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mut
         ticket_id=c.fetchone()['id']
         db.execute('INSERT INTO ticket_events(ticket_id,old_status,new_status,actor,created_at,actor_subject) VALUES(?,NULL,?,?,?,?)',(ticket_id,'reported',user.name,dt,user.subject))
         return {'ticket':dict(db.execute('SELECT * FROM tickets WHERE id=?',(ticket_id,)).fetchone())}
+
+def create_github_ticket(payload: TicketCreate, user: identity.Principal):
+    """Milestone 2: a QA report becomes a GitHub issue written by the PERPERIS QA App."""
+    with connection(write=True) as db:
+        identity.authorize_member(db, user)
+    if user.role == 'Tester' and payload.assigned_to:
+        raise HTTPException(403, 'Tester cannot assign tickets')
+    try:
+        ticket = github().create_issue(
+            title=payload.title, description=payload.description, severity=payload.severity,
+            category=CATEGORY_NAMES[payload.category], testing_round=payload.testing_round, area=payload.area,
+            environment=payload.environment, deploy_version=payload.deploy_version,
+            reporter=user.name if user.subject else payload.reporter.strip())
+    except github_issues.InvalidReport as exc:
+        raise HTTPException(422, str(exc)) from None
+    except github_issues.GitHubUnavailable:
+        raise HTTPException(502, 'GitHub could not be reached. Your report was not created; try again.') from None
+    return JSONResponse(status_code=201, content={'ticket': ticket})
+
 
 @APP.patch('/api/tickets/{ticket_id}')
 def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Depends(guard_mutation)):
@@ -245,7 +267,10 @@ def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Dep
 @APP.get('/api/analytics')
 def analytics(user:identity.Principal=Depends(current_user)):
     if github():
-        return compute_analytics(github_tickets(github()))
+        result = compute_analytics(github_tickets(github()))
+        rounds = github().open_rounds()
+        result['current_round'] = rounds[-1] if rounds else None
+        return result
     with connection() as db:
         rows=[dict(x) for x in db.execute('SELECT * FROM tickets').fetchall()]
     return compute_analytics(rows)
