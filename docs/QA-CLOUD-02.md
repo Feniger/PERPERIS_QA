@@ -1,5 +1,7 @@
 # QA-CLOUD-02 — versioned persistence and migration rehearsal
 
+> **Historical (2026-11-11).** PostgreSQL, the importer and all QA database code were removed with decision 4.2 in [QA-GITHUB-FRONTEND.md](QA-GITHUB-FRONTEND.md). Kept for the record.
+
 Stacked on QA-CLOUD-01; code only, no provisioning, merge or deployment.
 The Cloud Run/nonlocal startup block stays in force. PostgreSQL is now an opt-in
 local development backend; SQLite remains the default. No operator data was used.
