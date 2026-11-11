@@ -161,8 +161,10 @@ add_secret() {  # name; value from stdin. Never replaces an existing value.
 openssl rand -hex 32 | tr -d '\n' | add_secret perperis-qa-secret
 openssl rand -hex 32 | tr -d '\n' | add_secret perperis-qa-webhook-secret
 if [[ -z "$(gcloud services api-keys list --project "${PROJECT_ID}" --filter='displayName=perperis-qa-browser' --format='value(name)')" ]]; then
+  # The create operation prints the new key on stderr; silence both streams so it never shows.
   gcloud services api-keys create --project "${PROJECT_ID}" --display-name perperis-qa-browser \
-    --api-target=service=identitytoolkit.googleapis.com >/dev/null
+    --api-target=service=identitytoolkit.googleapis.com >/dev/null 2>&1 \
+    || { echo "Could not create the browser API key." >&2; exit 1; }
 fi
 key_name="$(gcloud services api-keys list --project "${PROJECT_ID}" --filter='displayName=perperis-qa-browser' --format='value(name)' | head -n1)"
 gcloud services api-keys get-key-string "${key_name}" --project "${PROJECT_ID}" --format='value(keyString)' \
