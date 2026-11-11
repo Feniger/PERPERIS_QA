@@ -79,7 +79,8 @@ jobs:
             --set-secrets "PERPERIS_QA_SECRET=perperis-qa-secret:latest,PERPERIS_QA_MEMBERS=perperis-qa-members:latest,PERPERIS_QA_GITHUB_PRIVATE_KEY=perperis-qa-github-key:latest,PERPERIS_QA_IDENTITY_WEB_API_KEY=perperis-qa-web-api-key:latest,PERPERIS_QA_GITHUB_WEBHOOK_SECRET=perperis-qa-webhook-secret:latest" \
             --allow-unauthenticated
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"
-          echo "Deployed: $url"
+          # Cloud Run reports its older-style address; sign-in only works on $ORIGIN.
+          echo "Deployed: $ORIGIN (Cloud Run also lists $url, where sign-in does not work)"
 
       - name: Smoke test
         run: |
