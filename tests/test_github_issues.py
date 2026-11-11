@@ -1,0 +1,320 @@
+"""Milestone 1: read-only GitHub issues adapter.
+
+All GitHub responses are recorded/synthetic fixtures served by httpx.MockTransport.
+These tests never contact GitHub and never use a real App key.
+"""
+import json
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import httpx
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+import github_issues as gh
+
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+PEM = KEY.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                        serialization.NoEncryption()).decode()
+PUBLIC = KEY.public_key()
+REPO = 'krummb/kattens-pt'
+CONFIG = gh.Config(app_id='5711212', installation_id='180847731', private_key=PEM, repo=REPO)
+
+
+def label(name):
+    return {'name': name}
+
+
+def issue(number, title, *, state='open', labels=(), milestone='R05', body='', state_reason=None,
+          created='2026-11-12T09:00:00Z', updated='2026-11-12T10:00:00Z', assignees=(), pr=False):
+    data = {'number': number, 'title': title, 'state': state, 'state_reason': state_reason,
+            'labels': [label(n) for n in labels], 'milestone': {'title': milestone} if milestone else None,
+            'body': body, 'created_at': created, 'updated_at': updated, 'user': {'login': 'krummb'},
+            'assignees': [{'login': a} for a in assignees],
+            'html_url': f'https://github.com/{REPO}/issues/{number}'}
+    if pr:
+        data['pull_request'] = {'url': 'x'}
+    return data
+
+
+def ev(kind, when, *, name=None, reason=None, actor='perperis-qa[bot]', id_=0):
+    e = {'id': id_, 'event': kind, 'created_at': when, 'actor': {'login': actor}}
+    if name:
+        e['label'] = {'name': name}
+    if kind == 'closed':
+        e['state_reason'] = reason
+    return e
+
+
+MILESTONES = [
+    {'title': 'R05', 'created_at': '2026-11-11T08:00:00Z'},
+    {'title': 'R06', 'created_at': '2026-11-20T08:00:00Z'},
+    {'title': 'Backlog', 'created_at': '2026-11-01T08:00:00Z'},
+]
+ROUNDS = gh.testing_rounds(MILESTONES)
+
+
+class Mapping(unittest.TestCase):
+    def test_open_issue_fields_from_labels_milestone_and_body(self):
+        body = ('### Steps\nOpen library\n\n### Environment\niPhone 15, Safari\n\n### Deploy\nDeploy #24\n\n'
+                'Reported by Anna Tester via PERPERIS QA\n')
+        t = gh.to_ticket(issue(12, 'Picker stuck', labels=['qa', 'bug', 'sev:high', 'area:library', 'status:triaged'],
+                               body=body, assignees=['Feniger']),
+                         [ev('labeled', '2026-11-12T09:05:00Z', name='status:triaged')], ROUNDS)
+        self.assertEqual(t['id'], 12)
+        self.assertEqual(t['status'], 'triaged')
+        self.assertEqual(t['severity'], 'high')
+        self.assertEqual(t['area'], 'library')
+        self.assertEqual(t['category'], 'bug')
+        self.assertEqual(t['testing_round'], 'R05')
+        self.assertEqual(t['reporter'], 'Anna Tester')
+        self.assertEqual(t['environment'], 'iPhone 15, Safari')
+        self.assertEqual(t['deploy_version'], 'Deploy #24')
+        self.assertEqual(t['assigned_to'], 'Feniger')
+        self.assertEqual(t['issue_url'], f'https://github.com/{REPO}/issues/12')
+        self.assertIsNone(t['fixed_at'])
+
+    def test_unlabelled_issue_is_reported_without_invented_severity_or_round(self):
+        t = gh.to_ticket(issue(3, 'Typo', labels=['qa'], milestone=None), [], ROUNDS)
+        self.assertEqual(t['status'], 'reported')
+        self.assertEqual(t['severity'], 'unset')
+        self.assertEqual(t['testing_round'], gh.NO_ROUND)
+        self.assertEqual(t['reporter'], 'krummb')
+        self.assertEqual(t['category'], 'other')
+
+    def test_closed_by_pr_counts_as_fixed_not_verified(self):
+        t = gh.to_ticket(issue(5, 'Crash', state='closed', state_reason='completed', labels=['qa', 'bug']),
+                         [ev('closed', '2026-11-13T12:00:00Z', reason='completed')], ROUNDS)
+        self.assertEqual(t['status'], 'fixed')
+        self.assertEqual(t['fixed_at'], '2026-11-13T12:00:00+00:00')
+        self.assertEqual(t['fixed_round'], 'R05')
+        self.assertIsNone(t['verified_at'])
+
+    def test_deployed_then_verified(self):
+        events = [ev('closed', '2026-11-13T12:00:00Z', reason='completed', id_=1),
+                  ev('labeled', '2026-11-13T12:10:00Z', name='status:deployed', id_=2),
+                  ev('labeled', '2026-11-21T09:00:00Z', name='status:verified', id_=3)]
+        base = dict(state='closed', state_reason='completed')
+        deployed = gh.to_ticket(issue(6, 'X', labels=['qa', 'status:deployed'], **base), events[:2], ROUNDS)
+        self.assertEqual(deployed['status'], 'deployed')
+        verified = gh.to_ticket(issue(6, 'X', labels=['qa', 'status:deployed', 'status:verified'], **base), events, ROUNDS)
+        self.assertEqual(verified['status'], 'verified')
+        self.assertEqual(verified['verified_round'], 'R06')  # verified after R06 opened
+        self.assertEqual(verified['fixed_round'], 'R05')
+
+    def test_closed_not_planned_is_closed_and_never_fixed(self):
+        t = gh.to_ticket(issue(7, 'Dup', state='closed', state_reason='duplicate', labels=['qa']),
+                         [ev('closed', '2026-11-13T12:00:00Z', reason='duplicate')], ROUNDS)
+        self.assertEqual(t['status'], 'closed')
+        self.assertIsNone(t['fixed_at'])
+        self.assertEqual(t['closed_at'], '2026-11-13T12:00:00+00:00')
+
+    def test_reopen_after_fix_keeps_first_fix_milestone(self):
+        events = [ev('labeled', '2026-11-12T10:00:00Z', name='status:fixed', id_=1),
+                  ev('closed', '2026-11-12T11:00:00Z', reason='completed', id_=2),
+                  ev('reopened', '2026-11-14T08:00:00Z', id_=3)]
+        t = gh.to_ticket(issue(8, 'Back again', labels=['qa', 'status:fixed']), events, ROUNDS)
+        self.assertEqual(t['status'], 'reopened')
+        self.assertEqual(t['fixed_at'], '2026-11-12T10:00:00+00:00')
+
+    def test_history_replays_status_changes(self):
+        events = [ev('labeled', '2026-11-12T10:00:00Z', name='status:triaged', id_=1),
+                  ev('labeled', '2026-11-12T10:01:00Z', name='area:today', id_=2),
+                  ev('closed', '2026-11-13T12:00:00Z', reason='completed', id_=3),
+                  ev('reopened', '2026-11-14T08:00:00Z', id_=4)]
+        steps = [(h['old_status'], h['new_status']) for h in gh.history(issue(9, 'H'), events)]
+        self.assertEqual(steps, [(None, 'reported'), ('reported', 'triaged'), ('triaged', 'fixed'), ('fixed', 'reopened')])
+
+    def test_round_at_uses_newest_round_opened_before_the_event(self):
+        self.assertEqual([r[1] for r in ROUNDS], ['R05', 'R06'])
+        self.assertEqual(gh.round_at(gh.parse_time('2026-11-10T00:00:00Z'), ROUNDS, 'R04'), 'R04')
+        self.assertEqual(gh.round_at(gh.parse_time('2026-11-25T00:00:00Z'), ROUNDS, 'R05'), 'R06')
+
+
+class Config(unittest.TestCase):
+    def test_database_is_the_default(self):
+        self.assertIsNone(gh.config_from_env({}))
+
+    def test_github_mode_requires_ids_and_key(self):
+        with self.assertRaises(RuntimeError):
+            gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'github'})
+        with self.assertRaises(RuntimeError):
+            gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'github', 'PERPERIS_QA_GITHUB_APP_ID': '1',
+                                'PERPERIS_QA_GITHUB_INSTALLATION_ID': '2', 'PERPERIS_QA_GITHUB_PRIVATE_KEY': 'nope'})
+        with self.assertRaises(RuntimeError):
+            gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'githubb'})
+
+    def test_key_from_file_and_default_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'key.pem'
+            path.write_text(PEM)
+            cfg = gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'github', 'PERPERIS_QA_GITHUB_APP_ID': '5711212',
+                                      'PERPERIS_QA_GITHUB_INSTALLATION_ID': '180847731',
+                                      'PERPERIS_QA_GITHUB_PRIVATE_KEY_FILE': str(path)})
+        self.assertEqual(cfg.repo, 'krummb/kattens-pt')
+
+    def test_errors_never_contain_the_key(self):
+        try:
+            gh.config_from_env({'PERPERIS_QA_TICKET_SOURCE': 'github', 'PERPERIS_QA_GITHUB_APP_ID': 'x',
+                                'PERPERIS_QA_GITHUB_INSTALLATION_ID': '2', 'PERPERIS_QA_GITHUB_PRIVATE_KEY': PEM})
+        except RuntimeError as exc:
+            self.assertNotIn('PRIVATE KEY-----\n', str(exc))
+            self.assertNotIn(PEM[40:80], str(exc))
+
+
+class FakeGitHub:
+    """Serves recorded responses; records every request for assertions."""
+
+    def __init__(self, issues, events, milestones=MILESTONES, page_size=None):
+        self.issues, self.events, self.milestones, self.page_size = issues, events, milestones, page_size
+        self.requests = []
+        self.token_calls = 0
+
+    def __call__(self, request: httpx.Request):
+        self.requests.append(request)
+        path = request.url.path
+        if path == f'/app/installations/{CONFIG.installation_id}/access_tokens':
+            self.token_calls += 1
+            assert request.method == 'POST'
+            token = request.headers['authorization'].removeprefix('Bearer ')
+            claims = jwt.decode(token, PUBLIC, algorithms=['RS256'])
+            assert claims['iss'] == CONFIG.app_id
+            return httpx.Response(201, json={'token': 'ghs_test', 'expires_at': '2099-01-01T00:00:00Z'})
+        assert request.headers['authorization'] == 'token ghs_test', 'reads must use the installation token'
+        if path == f'/repos/{REPO}/issues':
+            assert request.url.params.get('labels') == 'qa' or request.url.params.get('page')
+            if self.page_size:
+                page = int(request.url.params.get('page', '1'))
+                chunk = self.issues[(page - 1) * self.page_size: page * self.page_size]
+                headers = {}
+                if page * self.page_size < len(self.issues):
+                    headers['link'] = f'<https://api.github.com/repos/{REPO}/issues?page={page + 1}>; rel="next"'
+                return httpx.Response(200, json=chunk, headers=headers)
+            return httpx.Response(200, json=self.issues)
+        if path == f'/repos/{REPO}/milestones':
+            return httpx.Response(200, json=self.milestones)
+        if path.startswith(f'/repos/{REPO}/issues/') and path.endswith('/events'):
+            number = int(path.split('/')[-2])
+            return httpx.Response(200, json=self.events.get(number, []))
+        return httpx.Response(404, json={'message': 'Not Found'})
+
+
+ISSUES = [
+    issue(1, 'Critical crash', labels=['qa', 'bug', 'sev:critical']),
+    issue(2, 'Fixed by PR', state='closed', state_reason='completed', labels=['qa', 'bug', 'sev:medium']),
+    issue(3, 'Verified', state='closed', state_reason='completed',
+          labels=['qa', 'bug', 'sev:low', 'status:deployed', 'status:verified']),
+    issue(99, 'A pull request, not an issue', labels=['qa'], pr=True),
+]
+EVENTS = {
+    2: [ev('closed', '2026-11-13T12:00:00Z', reason='completed')],
+    3: [ev('closed', '2026-11-13T12:00:00Z', reason='completed', id_=1),
+        ev('labeled', '2026-11-13T13:00:00Z', name='status:deployed', id_=2),
+        ev('labeled', '2026-11-14T09:00:00Z', name='status:verified', id_=3)],
+}
+
+
+class Adapter(unittest.TestCase):
+    def make(self, fake, clock=time.time):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake), clock=clock)
+
+    def test_reads_issues_with_app_token_and_skips_pull_requests(self):
+        fake = FakeGitHub(ISSUES, EVENTS)
+        adapter = self.make(fake)
+        tickets = adapter.tickets()
+        self.assertEqual([t['id'] for t in tickets], [1, 2, 3])
+        self.assertEqual([t['status'] for t in tickets], ['reported', 'fixed', 'verified'])
+        self.assertEqual(fake.token_calls, 1)
+        self.assertNotIn('/repos/krummb/kattens-pt/issues/99/events', [r.url.path for r in fake.requests])
+
+    def test_snapshot_is_cached_and_token_reused(self):
+        now = [time.time()]
+        fake = FakeGitHub(ISSUES, EVENTS)
+        adapter = self.make(fake, clock=lambda: now[0])
+        adapter.tickets()
+        calls = len(fake.requests)
+        adapter.tickets()
+        self.assertEqual(len(fake.requests), calls, 'second read within the cache window hits GitHub again')
+        now[0] += 120
+        adapter.tickets()
+        self.assertGreater(len(fake.requests), calls)
+        self.assertEqual(fake.token_calls, 1)
+
+    def test_follows_pagination(self):
+        many = [issue(n, f'Bug {n}', labels=['qa']) for n in range(1, 8)]
+        fake = FakeGitHub(many, {}, page_size=3)
+        self.assertEqual(len(self.make(fake).tickets()), 7)
+
+    def test_github_errors_become_unavailable_without_details(self):
+        def broken(request):
+            if request.url.path.endswith('/access_tokens'):
+                return httpx.Response(401, json={'message': 'A JSON web token could not be decoded'})
+            return httpx.Response(500)
+        with self.assertRaises(gh.GitHubUnavailable) as caught:
+            self.make(broken).tickets()
+        self.assertNotIn('ghs_', str(caught.exception))
+
+    def test_history_for_known_and_unknown_issue(self):
+        adapter = self.make(FakeGitHub(ISSUES, EVENTS))
+        self.assertEqual(adapter.history(3)[-1]['new_status'], 'verified')
+        self.assertIsNone(adapter.history(404))
+
+
+class StubAdapter:
+    def __init__(self, tickets):
+        self._tickets = tickets
+        self.config = CONFIG
+
+    def tickets(self):
+        return self._tickets
+
+    def history(self, number):
+        return [{'old_status': None, 'new_status': 'reported', 'actor': 'krummb', 'created_at': 'x'}] if number == 1 else None
+
+    def close(self):
+        pass
+
+
+class AppWiring(unittest.TestCase):
+    """The existing API shape serves GitHub-derived tickets; writes are refused (read-only milestone)."""
+
+    def test_api_in_github_mode(self):
+        import app as qa_app
+        from fastapi.testclient import TestClient
+        tickets = [gh.to_ticket(i, EVENTS.get(i['number'], []), ROUNDS) for i in ISSUES if 'pull_request' not in i]
+        env = {'PERPERIS_QA_ENV': 'local', 'PERPERIS_QA_AUTH_MODE': 'local_shared',
+               'PERPERIS_QA_ATTACHMENT_BACKEND': 'disabled', 'PERPERIS_QA_TICKET_SOURCE': 'database'}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(qa_app, 'ADMIN_PASSWORD', 'wiring-password-long'), \
+                mock.patch.object(qa_app, 'SECRET', 's' * 40), \
+                TestClient(qa_app.APP) as client:
+            qa_app.APP.state.github = StubAdapter(tickets)
+            try:
+                self.assertEqual(client.post('/api/login', json={'password': 'wiring-password-long'}).status_code, 200)
+                config = client.get('/api/auth/config').json()
+                self.assertEqual(config['tickets_source'], 'github')
+                self.assertEqual(config['tickets_repo'], REPO)
+                self.assertFalse(config['attachments_enabled'])
+                listed = client.get('/api/tickets').json()['tickets']
+                self.assertEqual([t['id'] for t in listed], [1, 2, 3])
+                a = client.get('/api/analytics').json()
+                self.assertEqual((a['total'], a['open'], a['fixed'], a['verified'], a['critical']), (3, 2, 2, 1, 1))
+                self.assertEqual(a['backlog'], 2)
+                headers = {'X-QA-Request': '1'}
+                body = {'title': 'New bug', 'reporter': 'X', 'testing_round': 'R05'}
+                self.assertEqual(client.post('/api/tickets', headers=headers, json=body).status_code, 405)
+                self.assertEqual(client.patch('/api/tickets/1', headers=headers, json={'status': 'triaged'}).status_code, 405)
+                self.assertEqual(client.get('/api/tickets/1/history').status_code, 200)
+                self.assertEqual(client.get('/api/tickets/2/history').status_code, 404)
+                self.assertEqual(client.get('/api/tickets/1/attachments').status_code, 404)
+            finally:
+                qa_app.APP.state.github = None
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -10,6 +10,7 @@
 !entrypoint.py
 !maintenance.py
 !runtime_guard.py
+!github_issues.py
 !migrations/
 migrations/**
 !migrations/sqlite/
