@@ -148,7 +148,7 @@ def index():
 
 # Fixed allowlist: nothing else under static/ is ever served.
 STATIC_FILES = {
-    'app.js': None, 'styles.css': None, 'auth.js': None, 'attachments.js': None,
+    'app.js': None, 'styles.css': None, 'auth.js': None, 'attachments.js': None, 'theme.js': None,
     'icon.svg': 'image/svg+xml', 'icon-16.png': 'image/png', 'icon-32.png': 'image/png',
     'icon-180.png': 'image/png', 'icon-192.png': 'image/png', 'icon-512.png': 'image/png',
     'manifest.webmanifest': 'application/manifest+json',
