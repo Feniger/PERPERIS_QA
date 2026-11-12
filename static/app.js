@@ -252,7 +252,7 @@ $('quick-form').addEventListener('submit',async e=>{
 $('quick-details').addEventListener('click',()=>newTicket({title:$('q-title').value,description:$('q-description').value,kind:$('q-kind').value,severity:$('q-severity').value,testing_round:$('q-round').value,reporter:$('q-reporter').value}));
 
 /* ---------- dialog ---------- */
-function setModal(open){$('modal').classList.toggle('hidden',!open);document.body.style.overflow=open?'hidden':'';if(open){lastFocus=document.activeElement;setTimeout(()=>document.querySelector('#ticket-form input:not([type=hidden]):not(:disabled):not([readonly]), #ticket-form select:not(:disabled)')?.focus(),20);}else{editing=null;lastFocus?.focus?.();}}
+function setModal(open){$('modal').classList.toggle('hidden',!open);document.body.style.overflow=open?'hidden':'';if(open){lastFocus=document.activeElement;setTimeout(()=>(document.querySelector('#ticket-form [name=title]:not(:disabled)')||document.querySelector('#ticket-form input:not([type=hidden]):not(:disabled):not([readonly]), #ticket-form select:not(:disabled)'))?.focus(),20);}else{editing=null;lastFocus?.focus?.();}}
 /* Only the visible half of the dialog takes part in validation and submit. Required fields inside a
    hidden section otherwise make the browser refuse to submit ("invalid form control is not focusable"). */
 function setDialogMode(create){
