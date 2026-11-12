@@ -537,6 +537,41 @@ class ScreenshotComment(unittest.TestCase):
         self.assertEqual(memory.upsert_screenshot_comment(ticket['id'], 1, 'http://x/#ticket-1'), 'none')
 
 
+class TicketLookup(unittest.TestCase):
+    """A ticket created moments ago must be found even when the cached list does not have it yet."""
+
+    def make(self, fake):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
+
+    def test_unknown_numbers_are_looked_up_directly(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        adapter = self.make(fake)
+        self.assertTrue(adapter.has_ticket(1))                      # in the cached list
+        fake.issues = [issue(7, 'Just created', labels=['qa', 'bug', 'sev:low']),
+                       issue(8, 'Not a QA ticket', labels=['bug'])] + fake.issues
+        self.assertFalse(any(t['id'] == 7 for t in adapter.tickets()))   # the cache is still the old snapshot
+        self.assertFalse(adapter.has_ticket(8))                     # looked up, but it has no `qa` label
+        self.assertFalse(adapter.has_ticket(99))                    # a pull request
+        self.assertFalse(adapter.has_ticket(12345))                 # does not exist
+        self.assertTrue(adapter.has_ticket(7))                      # found by asking GitHub for that issue
+        self.assertTrue(any(t['id'] == 7 for t in adapter.tickets()))    # and the list refreshes afterwards
+
+    def test_github_errors_are_not_reported_as_missing(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        adapter = self.make(fake)
+        adapter.snapshot()
+        fake.reads_down = True
+        with self.assertRaises(gh.GitHubUnavailable):
+            adapter.has_ticket(555)
+
+    def test_memory_stand_in(self):
+        memory = gh.MemoryIssues()
+        ticket = memory.create_issue(title='Memory', description='Expected x, saw y', severity='low', category='Other',
+                                     testing_round='R01', area='', environment='local', deploy_version='', reporter='T')
+        self.assertTrue(memory.has_ticket(ticket['id']))
+        self.assertFalse(memory.has_ticket(ticket['id'] + 50))
+
+
 class StatusChanges(unittest.TestCase):
     """Milestone 3: Triage / Verify / Reopen written to GitHub."""
 

@@ -350,7 +350,7 @@ def screenshot_service():
 
 def require_ticket(ticket_id: int):
     """Screenshots attach only to QA tickets (issues labeled qa) that QA can see."""
-    if not any(t['id'] == ticket_id for t in from_github(tickets_source().tickets)):
+    if not from_github(lambda: tickets_source().has_ticket(ticket_id)):
         raise HTTPException(404, 'Ticket not found')
 
 
