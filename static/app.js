@@ -6,7 +6,7 @@ const STATUSES = ['reported', 'triaged', 'in_progress', 'fixed', 'deployed', 've
 const DONE = ['verified', 'closed'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const SEV_RANK = {critical: 0, high: 1, medium: 2, low: 3};
-const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',fixed:'Fixed',deployed:'Deployed',verified:'Verified',closed:'Closed',reopened:'Reopened',ui_ux:'UI / UX',coach_ai:'Coach / AI',unset:'No severity',bug:'Bug',task:'Task'};
+const LABELS = {reported:'Reported',triaged:'Triaged',in_progress:'In progress',fixed:'Fixed',deployed:'Deployed',verified:'Verified',closed:'Closed',reopened:'Reopened',ui_ux:'UI / UX',coach_ai:'Coach / AI',unset:'No severity',bug:'Bug',task:'Request',question:'Question'};
 let tickets = [], analytics = null, editing = null, lastFocus = null, selectedRound = null, loaded = false, session = {role:'Admin'};
 /* Statuses each role may set. Mirrors the server's role matrix (the server enforces it). */
 const ROLE_STATUSES = {Developer:['triaged','in_progress','fixed','deployed'], Tester:['verified','closed','reopened']};
@@ -35,10 +35,13 @@ const defaultReporter = () => managed() ? (session.name||'') : 'Product Owner';
 async function api(url,{method='GET',body}={}) {
   const res = await fetch(url,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-QA-Request':'1'},body:body ? JSON.stringify(body) : undefined});
   let data; try {data=await res.json()}catch {data={detail:'Unexpected response from QA server.'}}
+  if(res.status===401&&loaded) window.qaSessionExpired();
   if(!res.ok) {const message = typeof data.detail==='string'?data.detail:JSON.stringify(data.detail||'Request failed'); const e=new Error(message);e.status=res.status;throw e;}
   return data;
 }
 function toggleSession(authed){$('workspace').classList.toggle('hidden',!authed);$('login').classList.toggle('hidden',authed);}
+/* The 8-hour sign-in ended: leave any open dialog and go to the sign-in screen instead of showing errors in it. */
+window.qaSessionExpired=()=>{loaded=false;setModal(false);toggleSession(false);$('login-error').textContent='Your sign-in has ended. Sign in again.';};
 async function initial(){
   try {
     qaIdentity.config=await api('/api/auth/config');
@@ -240,16 +243,16 @@ $('quick-form').addEventListener('submit',async e=>{
   e.preventDefault();const btn=$('quick-submit'),msg=$('quick-error');
   btn.disabled=true;msg.className='error';msg.textContent='';
   try{
-    const res=await api('/api/tickets',{method:'POST',body:{title:$('q-title').value,description:$('q-description').value,reporter:$('q-reporter').value,severity:$('q-severity').value,testing_round:$('q-round').value}});
+    const res=await api('/api/tickets',{method:'POST',body:{title:$('q-title').value,description:$('q-description').value,reporter:$('q-reporter').value,kind:$('q-kind').value,severity:$('q-severity').value,testing_round:$('q-round').value}});
     $('q-title').value='';$('q-description').value='';
     await refresh();msg.className='ok';msg.textContent=`Reported ${ticketNo(res.ticket.id)}.`;$('q-title').focus();
   }catch(err){if(err.status===401){toggleSession(false);return;}msg.textContent=err.message;}
   finally{btn.disabled=false;}
 });
-$('quick-details').addEventListener('click',()=>newTicket({title:$('q-title').value,description:$('q-description').value,severity:$('q-severity').value,testing_round:$('q-round').value,reporter:$('q-reporter').value}));
+$('quick-details').addEventListener('click',()=>newTicket({title:$('q-title').value,description:$('q-description').value,kind:$('q-kind').value,severity:$('q-severity').value,testing_round:$('q-round').value,reporter:$('q-reporter').value}));
 
 /* ---------- dialog ---------- */
-function setModal(open){$('modal').classList.toggle('hidden',!open);document.body.style.overflow=open?'hidden':'';if(open){lastFocus=document.activeElement;setTimeout(()=>document.querySelector('#ticket-form input:not([type=hidden]):not(:disabled):not([readonly]), #ticket-form select:not(:disabled)')?.focus(),20);}else{editing=null;lastFocus?.focus?.();}}
+function setModal(open){$('modal').classList.toggle('hidden',!open);document.body.style.overflow=open?'hidden':'';if(open){lastFocus=document.activeElement;setTimeout(()=>(document.querySelector('#ticket-form [name=title]:not(:disabled)')||document.querySelector('#ticket-form input:not([type=hidden]):not(:disabled):not([readonly]), #ticket-form select:not(:disabled)'))?.focus(),20);}else{editing=null;lastFocus?.focus?.();}}
 /* Only the visible half of the dialog takes part in validation and submit. Required fields inside a
    hidden section otherwise make the browser refuse to submit ("invalid form control is not focusable"). */
 function setDialogMode(create){
@@ -260,13 +263,14 @@ function newTicket(prefill={}){
   editing=null;const form=$('ticket-form');form.reset();setDialogMode(true);
   $('create-fields').classList.remove('hidden');$('update-fields').classList.add('hidden');$('form-submit').classList.remove('hidden');
 
-  $('modal-eyebrow').textContent='Issue intake';$('modal-title').textContent='Report a bug';$('form-submit').textContent='Create report';$('form-error').textContent='';
+  $('modal-eyebrow').textContent='Issue intake';$('modal-title').textContent='Report an issue';$('form-submit').textContent='Create report';$('form-error').textContent='';
   qaScreenshots.reset();
   form.elements.reporter.readOnly=managed();
   form.elements.reporter.value=managed()?defaultReporter():(prefill.reporter||defaultReporter());
   form.elements.testing_round.value=prefill.testing_round||latestRound()||'R01';
   if(prefill.title) form.elements.title.value=prefill.title;
   if(prefill.description) form.elements.description.value=prefill.description;
+  if(prefill.kind) form.elements.kind.value=prefill.kind;
   if(prefill.severity) form.elements.severity.value=prefill.severity;
   setModal(true);
 }
@@ -278,14 +282,53 @@ function openEdit(id){
   $('ticket-detail').innerHTML=`<p>${esc(ticket.description||'No detailed steps provided.')}</p><div class="ticket-detail-meta">Reported by ${esc(ticket.reporter)} · ${esc(ticket.testing_round)} · ${esc(label(ticket.category))} · ${esc(label(ticket.severity))}${ticket.issue_url?` · <a href="${esc(safeUrl(ticket.issue_url))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`:''}</div>`;
   /* No preselected change: saving without choosing is refused by the browser (required) and the server. */
   $('edit-status').innerHTML='<option value="" disabled selected>Change status…</option>'+allowedStatuses().map(s=>`<option value="${s}">${label(s)}</option>`).join('');
+  qaThread.open(ticket);
   setModal(true);
 }
+/* ---------- conversation: GitHub comments, plain comments, Approve (Go) ---------- */
+const qaThread={
+  plain: text=>String(text||'').replace(/\*\*(.+?)\*\*/g,'$1'),
+  open(ticket){
+    $('comment-list').replaceChildren();$('comment-text').value='';$('comment-status').textContent='';
+    $('approve-go').classList.toggle('hidden',!(session.role==='Admin'&&ticket.category==='task'&&!DONE.includes(ticket.status)));
+    this.load(ticket.id);
+  },
+  async load(id){
+    try{
+      const data=await api(`/api/tickets/${id}/comments`);if(!editing||editing.id!==id)return;
+      const mount=$('comment-list');mount.replaceChildren();
+      if(!data.comments.length){const none=document.createElement('p');none.className='screenshot-meta';none.textContent='No comments yet.';mount.append(none);return;}
+      for(const c of data.comments){
+        const row=document.createElement('div');row.className='comment';
+        const head=document.createElement('p');head.className='comment-head';head.textContent=`${c.author||'GitHub'} · ${ago(c.created_at)}`;
+        const body=document.createElement('p');body.className='comment-body';body.textContent=this.plain(c.body);
+        row.append(head,body);mount.append(row);
+      }
+    }catch(err){if(editing&&editing.id===id&&err.status!==401)$('comment-status').textContent=`Comments could not be loaded: ${err.message}`;}
+  },
+  async changed(id){
+    await refresh();
+    if(editing&&editing.id===id){const fresh=tickets.find(t=>t.id===id);if(fresh)editing=fresh;await this.load(id);}
+  },
+  async send(path,body,done){
+    const id=editing?.id;if(!id)return;
+    const buttons=[$('comment-send'),$('approve-go')];buttons.forEach(b=>{b.disabled=true;});$('comment-status').textContent='';
+    try{await api(`/api/tickets/${id}/${path}`,{method:'POST',body});done?.();await this.changed(id);}
+    catch(err){if(err.status!==401)$('comment-status').textContent=err.message;}
+    finally{buttons.forEach(b=>{b.disabled=false;});}
+  }
+};
+$('comment-send').addEventListener('click',()=>{
+  const text=$('comment-text').value.trim();if(!text){$('comment-status').textContent='Write a comment first.';return;}
+  qaThread.send('comments',{text},()=>{$('comment-text').value='';});
+});
+$('approve-go').addEventListener('click',()=>qaThread.send('approve',undefined,()=>{}));
 $('ticket-form').addEventListener('submit',async e=>{
   e.preventDefault();const form=e.currentTarget,btn=$('form-submit');btn.disabled=true;$('form-error').textContent='';
   try{
     let res;
     if(editing){res=await api(`/api/tickets/${editing.id}`,{method:'PATCH',body:{expected_updated_at:editing.updated_at,status:form.elements.status.value,comment:form.elements.comment.value}});}
-    else{const fields=['title','description','reporter','severity','category','testing_round','area','environment','deploy_version'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
+    else{const fields=['kind','title','description','reporter','severity','category','testing_round','area','environment','deploy_version'];const payload={};fields.forEach(k=>payload[k]=form.elements[k].value);res=await api('/api/tickets',{method:'POST',body:payload});}
     /* New report with screenshots: the issue exists first, then the dialog switches to it and the
        queued files upload. If one fails, the ticket stays saved and "Retry upload" resends the rest. */
     if(!editing&&qaScreenshots.queue.length){
@@ -330,6 +373,6 @@ for(const [id,action] of [['register','register'],['reset-password','reset']]){
   });
 }
 
-async function signOut(){try{await api('/api/logout',{method:'POST'})}finally{toggleSession(false);}}
+async function signOut(){try{await api('/api/logout',{method:'POST'})}finally{loaded=false;toggleSession(false);}}
 $('logout').addEventListener('click',signOut);$('logout-mobile').addEventListener('click',signOut);
 initial();

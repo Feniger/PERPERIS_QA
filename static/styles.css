@@ -297,3 +297,10 @@ input[readonly] { background: var(--surface-1); color: var(--muted); }
 .screenshot-meta { flex: 1; font-size: 0.8125rem; color: var(--muted); }
 .screenshot-item.queued img { opacity: 0.6; }
 .screenshot-item a { display: block; line-height: 0; }
+
+/* Conversation in the ticket dialog */
+.thread { margin: 1.25rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.comment { padding: 0.625rem 0; border-top: 1px solid var(--border); }
+.comment:first-child { border-top: 0; }
+.comment-head { margin: 0 0 0.25rem; font-size: 0.8125rem; color: var(--muted); }
+.comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

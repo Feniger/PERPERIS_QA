@@ -104,6 +104,15 @@ def from_github(read):
         raise HTTPException(502, 'GitHub could not be read. Try again shortly.') from None
 
 
+class CommentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+    @field_validator('text', mode='before')
+    @classmethod
+    def strip_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
 class SignIn(BaseModel):
     password: str = Field(max_length=1024)
 
@@ -112,6 +121,7 @@ class TicketCreate(BaseModel):
     # Required: GitHub readers cannot see QA's screenshots, so the words must carry the report.
     description: str = Field(min_length=10, max_length=10000)
     reporter: str = Field(min_length=1,max_length=100)
+    kind: str = 'bug'
     category: str = 'ui_ux'
     severity: str = 'medium'
     testing_round: str = Field(min_length=1,max_length=48)
@@ -199,12 +209,46 @@ def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mut
             title=payload.title, description=payload.description, severity=payload.severity,
             category=CATEGORY_NAMES[payload.category], testing_round=payload.testing_round, area=payload.area,
             environment=payload.environment, deploy_version=payload.deploy_version,
-            reporter=user.name if user.subject else payload.reporter.strip())
+            reporter=user.name if user.subject else payload.reporter.strip(), kind=payload.kind)
     except github_issues.InvalidReport as exc:
         raise HTTPException(422, str(exc)) from None
     except github_issues.GitHubUnavailable:
         raise HTTPException(502, 'GitHub could not be reached. Your report was not created; try again.') from None
     return JSONResponse(status_code=201, content={'ticket': ticket})
+
+@APP.get('/api/tickets/{ticket_id}/comments')
+def list_comments(ticket_id: int, user: identity.Principal = Depends(current_user)):
+    """The issue's conversation, so QA members see what was asked and answered without opening GitHub."""
+    require_ticket(ticket_id)
+    return {'comments': from_github(lambda: tickets_source().comment_list(ticket_id))}
+
+
+@APP.post('/api/tickets/{ticket_id}/comments', status_code=201)
+def add_comment(ticket_id: int, payload: CommentIn, user: identity.Principal = Depends(guard_mutation)):
+    """Any member may comment without changing the status; the comment is signed with their name."""
+    require_ticket(ticket_id)
+    comment = from_github(lambda: tickets_source().add_comment(ticket_id, user.name, payload.text))
+    identity.security_event(user.subject, str(ticket_id), 'comment_added')
+    return {'comment': comment}
+
+
+@APP.post('/api/tickets/{ticket_id}/approve', status_code=201)
+def approve_request(ticket_id: int, user: identity.Principal = Depends(guard_mutation)):
+    """An Admin says Go on a change request: the autopilot then builds it as a pull request for review."""
+    if user.role != 'Admin':
+        raise HTTPException(403, 'Only an Admin can approve a request')
+    require_ticket(ticket_id)
+    ticket = next((t for t in from_github(tickets_source().tickets) if t['id'] == ticket_id), None)
+    if ticket is None:
+        raise HTTPException(409, 'The ticket list is still updating; try again in a moment')
+    if ticket['category'] != 'task':
+        raise HTTPException(409, 'Only requests are approved; bugs are fixed without a Go')
+    if ticket['status'] in ('verified', 'closed'):
+        raise HTTPException(409, 'This request is already closed')
+    comment = from_github(lambda: tickets_source().add_comment(ticket_id, user.name, approve=True))
+    identity.security_event(user.subject, str(ticket_id), 'request_approved')
+    return {'comment': comment}
+
 
 @APP.patch('/api/tickets/{ticket_id}')
 def update_ticket(ticket_id:int,payload:TicketUpdate,user:identity.Principal=Depends(guard_mutation)):
@@ -276,6 +320,7 @@ def compute_analytics(rows):
     """Deterministic figures from ticket rows derived from GitHub issues."""
     categories={};severity={};reporters={};rounds={}
     closed={'verified','closed'}
+    rows=[t for t in rows if t.get('category')!='question']   # questions are discussion, not work items
     for t in rows:
         for d,k in [(categories,'category'),(severity,'severity'),(reporters,'reporter')]: d[t[k]]=d.get(t[k],0)+1
         rounds.setdefault(t['testing_round'],{'round':t['testing_round'],'found':0,'fixed':0,'verified':0})['found']+=1

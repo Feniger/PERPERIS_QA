@@ -86,6 +86,13 @@ def main():
                         expect(page.locator('#ticket-detail')).to_be_visible()
                         expect(page.locator('#ticket-detail')).to_contain_text('Reported by Product Owner')
                         expect(page.locator('#edit-status')).to_have_value('')
+                        # Conversation: a plain comment without a status change; a bug needs no Go.
+                        expect(page.locator('#comment-list')).to_contain_text('No comments yet')
+                        expect(page.locator('#approve-go')).to_be_hidden()
+                        page.locator('#comment-text').fill('Seen on a phone too')
+                        page.locator('#comment-send').click()
+                        expect(page.locator('#comment-list')).to_contain_text('Seen on a phone too')
+                        expect(page.locator('#comment-text')).to_have_value('')
                         expect(page.locator('#screenshot-existing .screenshot-item')).to_have_count(1)
                         expect(page.locator('#screenshot-count')).to_have_text('1 of 10 uploaded')
                         page.wait_for_function("() => { const i = document.querySelector('#screenshot-existing img'); "

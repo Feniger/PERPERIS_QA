@@ -572,6 +572,65 @@ class TicketLookup(unittest.TestCase):
         self.assertFalse(memory.has_ticket(ticket['id'] + 50))
 
 
+class ReportKinds(unittest.TestCase):
+    """A report is a bug, a request (change or feature) or a question; the label decides how it is handled."""
+
+    def payload(self, **extra):
+        return gh.report_payload(milestone=1, title='A title', description='Expected x, saw y', severity='low',
+                                 category='Other', area='', environment='production', deploy_version='',
+                                 reporter='Tester', **extra)
+
+    def test_labels_follow_the_type(self):
+        self.assertEqual(self.payload()['labels'][:2], ['qa', 'bug'])
+        self.assertEqual(self.payload(kind='request')['labels'][:2], ['qa', 'task'])
+        self.assertEqual(self.payload(kind='question')['labels'][:2], ['qa', 'question'])
+        with self.assertRaises(gh.InvalidReport):
+            self.payload(kind='feature')
+
+    def test_ticket_category_follows_the_label(self):
+        for labels, expected in ((['qa', 'task'], 'task'), (['qa', 'question'], 'question'), (['qa', 'bug'], 'bug')):
+            self.assertEqual(gh.to_ticket(issue(5, 'x', labels=labels), [], ROUNDS)['category'], expected)
+
+
+class Conversation(unittest.TestCase):
+    """Comments shown in QA, plain comments without a status change, and the Admin-only Go."""
+
+    def make(self, fake):
+        return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
+
+    def test_view_hides_markers_and_the_screenshot_comment(self):
+        self.assertIsNone(gh.comment_view({'body': gh.SCREENSHOT_MARKER + '\n📎 1 screenshot'}))
+        self.assertIsNone(gh.comment_view({'body': '<!-- qa-autopilot:triaged -->'}))
+        view = gh.comment_view({'id': 1, 'body': '<!-- hidden -->\nHello', 'user': {'login': 'krummb', 'type': 'User'},
+                                'created_at': '2026-11-12T09:00:00Z'})
+        self.assertEqual((view['author'], view['body'], view['bot']), ('krummb', 'Hello', False))
+
+    def test_list_and_post(self):
+        fake = FakeGitHub([dict(i) for i in ISSUES], EVENTS)
+        fake.thread[1] = [
+            {'id': 1, 'body': 'Please check', 'user': {'login': 'krummb', 'type': 'User'}, 'created_at': '2026-11-12T09:00:00Z'},
+            {'id': 2, 'body': gh.SCREENSHOT_MARKER + '\nx', 'user': {'login': 'perperis-qa[bot]', 'type': 'Bot'}}]
+        adapter = self.make(fake)
+        self.assertEqual([c['body'] for c in adapter.comment_list(1)], ['Please check'])
+        adapter.add_comment(1, 'Robert', 'Looks good')
+        self.assertEqual(fake.comments[-1], (1, '**Comment** by Robert via PERPERIS QA\n\nLooks good'))
+        adapter.add_comment(1, 'Robert', approve=True)
+        self.assertEqual(fake.comments[-1], (1, '**Go: approved** by Robert via PERPERIS QA'))
+
+    def test_memory_stand_in(self):
+        memory = gh.MemoryIssues()
+        ticket = memory.create_issue(title='Memory', description='Expected x, saw y', severity='low', category='Other',
+                                     testing_round='R01', area='', environment='local', deploy_version='', reporter='T',
+                                     kind='request')
+        self.assertEqual(memory.tickets()[0]['category'], 'task')
+        before = memory.tickets()[0]['updated_at']
+        memory.add_comment(ticket['id'], 'Erik', 'hello')
+        memory.add_comment(ticket['id'], 'Erik', approve=True)
+        self.assertEqual([c['body'].splitlines()[0] for c in memory.comment_list(ticket['id'])],
+                         ['**Comment** by Erik via PERPERIS QA', '**Go: approved** by Erik via PERPERIS QA'])
+        self.assertNotEqual(memory.tickets()[0]['updated_at'], before)
+
+
 class StatusChanges(unittest.TestCase):
     """Milestone 3: Triage / Verify / Reopen written to GitHub."""
 
