@@ -75,3 +75,14 @@ try:
 except RuntimeError as exc:
     assert 'cloud startup is blocked' in str(exc)
 ''', K_SERVICE='perperis-qa'))
+
+    def test_theme_script_is_external_and_served(self):
+        """The CSP allows no inline scripts, so dark mode must load from /static/theme.js and be allowlisted."""
+        index = (ROOT / 'static' / 'index.html').read_text()
+        self.assertIn('<script src="/static/theme.js"></script>', index)
+        self.assertIn('data-theme-toggle', index)
+        self.assertNotIn('<script>', index)
+        self.assertTrue((ROOT / 'static' / 'theme.js').is_file())
+        self.assertIn("'theme.js'", (ROOT / 'app.py').read_text())
+        self.assertIn('html[data-theme="dark"]', (ROOT / 'static' / 'styles.css').read_text())
+

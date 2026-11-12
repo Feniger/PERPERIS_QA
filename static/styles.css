@@ -304,3 +304,26 @@ input[readonly] { background: var(--surface-1); color: var(--muted); }
 .comment:first-child { border-top: 0; }
 .comment-head { margin: 0 0 0.25rem; font-size: 0.8125rem; color: var(--muted); }
 .comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---- dark theme ----
+   Everything above is token-driven, so dark mode swaps the tokens: paper becomes charcoal, ink becomes
+   off-white. The accents keep their hues. Set by static/theme.js from the saved choice (Auto / Light / Dark). */
+html[data-theme="dark"] {
+  --paper: oklch(0.19 0.012 85);
+  --ink: oklch(0.95 0.01 88);
+  --surface-1: oklch(0.225 0.013 85);
+  --surface-2: oklch(0.26 0.014 85);
+  --border: oklch(0.34 0.015 85);
+  --muted: oklch(0.74 0.015 88);
+  --tertiary: oklch(0.68 0.015 88);
+  --disabled: oklch(0.5 0.012 88);
+  --navy: oklch(0.45 0.1 249.5);
+  color-scheme: dark;
+  background-color: var(--paper);
+}
+/* Bright accent fills carry dark text in both themes (ink turns light in dark mode). */
+html[data-theme="dark"] .btn-primary, html[data-theme="dark"] .bottom-nav .bottom-new, html[data-theme="dark"] .hero-critical { color: oklch(0.145 0 0); }
+html[data-theme="dark"] .hero-attention { color: oklch(0.97 0.005 88); }
+html[data-theme="dark"] .banner-error { background: oklch(0.3 0.07 20); }
+html[data-theme="dark"] .error { color: oklch(0.75 0.17 22); }
+html[data-theme="dark"] .modal-overlay { background: oklch(0 0 0 / 0.65); }
