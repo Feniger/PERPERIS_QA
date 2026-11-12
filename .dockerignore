@@ -14,6 +14,7 @@ static/**
 !static/app.js
 !static/auth.js
 !static/attachments.js
+!static/theme.js
 !static/styles.css
 !static/icon.svg
 !static/icon-16.png

@@ -86,3 +86,13 @@ except RuntimeError as exc:
         self.assertIn("'theme.js'", (ROOT / 'app.py').read_text())
         self.assertIn('html[data-theme="dark"]', (ROOT / 'static' / 'styles.css').read_text())
 
+    def test_every_served_static_file_is_in_the_container(self):
+        """.dockerignore drops static/** except a list; a file missing there is served in tests but 404 in Cloud Run."""
+        import ast
+        tree = ast.parse((ROOT / 'app.py').read_text())
+        served = next(ast.literal_eval(node.value) for node in ast.walk(tree)
+                      if isinstance(node, ast.Assign) and any(getattr(t, 'id', None) == 'STATIC_FILES' for t in node.targets))
+        admitted = {line.strip()[len('!static/'):] for line in (ROOT / '.dockerignore').read_text().splitlines()
+                    if line.strip().startswith('!static/')}
+        self.assertEqual(sorted(set(served) - admitted), [])
+        self.assertIn('index.html', admitted)
