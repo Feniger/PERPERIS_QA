@@ -610,6 +610,29 @@ class GitHubIssues:
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']
 
+    def has_ticket(self, number: int) -> bool:
+        """True when `number` is a QA ticket (an issue labeled `qa`, not a pull request).
+
+        A ticket created moments ago can be missing from the cached list (another instance's cache, or GitHub's
+        list lagging behind), so an unknown number is looked up directly instead of being refused."""
+        if any(t['id'] == number for t in self.snapshot()['tickets']):
+            return True
+        headers = {'Authorization': f'token {self._installation_token()}'}
+        try:
+            response = self._client.get(f'/repos/{self.config.repo}/issues/{number}', headers=headers)
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if response.status_code == 404:
+            return False
+        if response.status_code != 200:
+            raise GitHubUnavailable(f'GitHub issue read failed ({response.status_code})')
+        issue = response.json()
+        found = 'pull_request' not in issue and any((label.get('name') if isinstance(label, dict) else label) == 'qa'
+                                                    for label in issue.get('labels') or [])
+        if found:
+            self.invalidate()    # the next list read picks the new ticket up
+        return found
+
     def history(self, number: int) -> list[dict] | None:
         data = self.snapshot()
         issue = data['issues'].get(number)
@@ -710,6 +733,9 @@ class MemoryIssues:
             self.screenshot_comments[number] = body
             issue['updated_at'] = self._now()   # like GitHub: a comment changes the issue's updated_at
             return 'edited' if previous is not None else 'posted'
+
+    def has_ticket(self, number: int) -> bool:
+        return any(t['id'] == number for t in self.tickets())
 
     def tickets(self) -> list[dict]:
         with self._lock:
