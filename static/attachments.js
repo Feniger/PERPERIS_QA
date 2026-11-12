@@ -62,6 +62,7 @@ window.qaScreenshots = {
         this.status(`Uploading ${this.queue.length} screenshot${this.queue.length>1?'s':''}…`,true);
         const res=await fetch(`/api/tickets/${ticketId}/screenshots`,{method:'POST',credentials:'same-origin',
           headers:{'X-QA-Request':'1','Content-Type':'application/octet-stream'},body:this.queue[0]});
+        if(res.status===401)window.qaSessionExpired?.();
         if(!res.ok){let data;try{data=await res.json();}catch{data={};}const e=new Error(typeof data.detail==='string'?data.detail:'Screenshot upload failed.');e.status=res.status;throw e;}
         this.queue.shift();this.render();
       }
@@ -76,6 +77,7 @@ window.qaScreenshots = {
   },
   async load(ticketId) {
     const res=await fetch(`/api/tickets/${ticketId}/screenshots`,{credentials:'same-origin'});
+    if(res.status===401)window.qaSessionExpired?.();
     if(!res.ok)throw new Error('Screenshots could not be loaded.');
     const data=await res.json();if(this.ticketId!==ticketId)return;
     const mount=this.el('screenshot-existing');mount.replaceChildren();

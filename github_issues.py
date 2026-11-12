@@ -95,7 +95,29 @@ def status_comment(status: str, actor: str, comment: str) -> str:
     return head + ('\n\n' + neutralize(comment.strip()) if comment.strip() else '')
 
 
+def note_comment(actor: str, text: str, *, approve: bool = False) -> str:
+    """A person's comment written by the App. The first line says who; an approval is a different first line
+    that only the Admin-only approve endpoint writes (the autopilot reads that line, never the text below it)."""
+    who = neutralize(" ".join(actor.split()))
+    if approve:
+        return f'**Go: approved** by {who} via PERPERIS QA'
+    return f'**Comment** by {who} via PERPERIS QA\n\n' + neutralize(text.strip())
+
+
 SCREENSHOT_MARKER = '<!-- perperis-qa:screenshots -->'
+
+
+def comment_view(comment: dict) -> dict | None:
+    """One issue comment as the QA dialog shows it. QA's screenshot comment and hidden markers are not conversation."""
+    body = comment.get('body') or ''
+    if body.startswith(SCREENSHOT_MARKER):
+        return None
+    text = HTML_COMMENT.sub('', body).strip()
+    if not text:
+        return None
+    user = comment.get('user') or {}
+    return {'id': comment.get('id'), 'author': user.get('login', ''), 'bot': user.get('type') == 'Bot',
+            'created_at': comment.get('created_at') or '', 'body': text[:4000]}
 
 
 def screenshot_comment(count: int, link: str) -> str:
@@ -286,7 +308,7 @@ def to_ticket(issue: dict, events: list[dict], rounds: list[tuple[float, str]]) 
         'title': issue.get('title', ''),
         'description': _description(body),
         'reporter': reporter,
-        'category': 'task' if 'task' in labels else 'bug' if 'bug' in labels else 'other',
+        'category': 'task' if 'task' in labels else 'question' if 'question' in labels else 'bug' if 'bug' in labels else 'other',
         'severity': severity,
         'status': status,
         'testing_round': discovery_round,
@@ -337,12 +359,19 @@ def unknown_round(testing_round: str, open_rounds: list[str]) -> InvalidReport:
     return InvalidReport(f'Round "{testing_round.strip()}" is not an open testing round (open: {known})')
 
 
+# What a report is: the label it gets in GitHub. A bug is fixed; a request waits for a Go; a question is discussion.
+KINDS = {'bug': 'bug', 'request': 'task', 'question': 'question'}
+HTML_COMMENT = re.compile(r'<!--.*?-->', re.S)
+
+
 def report_payload(*, milestone: int, title: str, description: str, severity: str, category: str, area: str,
-                   environment: str, deploy_version: str, reporter: str) -> dict:
+                   environment: str, deploy_version: str, reporter: str, kind: str = 'bug') -> dict:
     """The GitHub "create issue" request for one QA report."""
     if severity not in SEVERITIES:
         raise InvalidReport('Choose a severity: critical, high, medium or low')
-    labels = ['qa', 'bug', f'sev:{severity}']
+    if kind not in KINDS:
+        raise InvalidReport('Choose a type: bug, request or question')
+    labels = ['qa', KINDS[kind], f'sev:{severity}']
     if area_label(area):
         labels.append(area_label(area))
     return {'title': neutralize(' '.join(title.split())), 'labels': labels, 'milestone': milestone,
@@ -610,6 +639,25 @@ class GitHubIssues:
     def tickets(self) -> list[dict]:
         return self.snapshot()['tickets']
 
+    def comment_list(self, number: int) -> list[dict]:
+        """The issue's conversation, oldest first (the last 50), without QA's own screenshot comment."""
+        views = [view for view in (comment_view(c) for c in self._get_all(
+            f'/repos/{self.config.repo}/issues/{number}/comments', {'per_page': 100})) if view]
+        return views[-50:]
+
+    def add_comment(self, number: int, actor: str, text: str = '', *, approve: bool = False) -> dict:
+        """Post a comment on the issue as the App, signed with the person's name."""
+        headers = {'Authorization': f'token {self._installation_token()}'}
+        try:
+            response = self._client.post(f'/repos/{self.config.repo}/issues/{number}/comments',
+                                         json={'body': note_comment(actor, text, approve=approve)}, headers=headers)
+        except httpx.HTTPError:
+            raise GitHubUnavailable('GitHub could not be reached') from None
+        if response.status_code != 201:
+            raise GitHubUnavailable(f'GitHub comment failed ({response.status_code})')
+        self.invalidate()    # a comment changes the issue's updated_at
+        return comment_view(response.json()) or {}
+
     def has_ticket(self, number: int) -> bool:
         """True when `number` is a QA ticket (an issue labeled `qa`, not a pull request).
 
@@ -733,6 +781,23 @@ class MemoryIssues:
             self.screenshot_comments[number] = body
             issue['updated_at'] = self._now()   # like GitHub: a comment changes the issue's updated_at
             return 'edited' if previous is not None else 'posted'
+
+    def comment_list(self, number: int) -> list[dict]:
+        with self._lock:
+            bodies = list(self.comments.get(number, []))
+            stamp = self._now()
+        return [view for view in (comment_view({'id': index, 'body': body, 'created_at': stamp,
+                                                'user': {'login': 'perperis-qa[bot]', 'type': 'Bot'}})
+                                  for index, body in enumerate(bodies, 1)) if view][-50:]
+
+    def add_comment(self, number: int, actor: str, text: str = '', *, approve: bool = False) -> dict:
+        with self._lock:
+            issue = self._issues.get(number)
+            if issue is None:
+                raise GitHubUnavailable('No such issue')
+            self.comments.setdefault(number, []).append(note_comment(actor, text, approve=approve))
+            issue['updated_at'] = self._now()
+        return self.comment_list(number)[-1]
 
     def has_ticket(self, number: int) -> bool:
         return any(t['id'] == number for t in self.tickets())

@@ -296,6 +296,53 @@ class Api(unittest.TestCase):
         self.assertEqual(self.client.delete(self.path('/' + second['id']), headers=self.headers).status_code, 204)
         self.assertEqual(self.store.objects, {})
 
+    def create(self, **extra):
+        body = {'title': 'Synthetic ticket', 'reporter': 'x', 'testing_round': 'R01',
+                'description': 'Expected a button, saw none', **extra}
+        return self.client.post('/api/tickets', headers=self.headers, json=body)
+
+    def test_report_types_and_questions_are_not_counted_as_work(self):
+        self.assertEqual(self.create(kind='feature').status_code, 422)
+        total = self.client.get('/api/analytics').json()['total']
+        request = self.create(kind='request')
+        self.assertEqual(request.status_code, 201, request.text)
+        self.assertEqual(request.json()['ticket']['category'], 'task')
+        self.assertEqual(self.client.get('/api/analytics').json()['total'], total + 1)
+        question = self.create(kind='question')
+        self.assertEqual(question.json()['ticket']['category'], 'question')
+        self.assertEqual(self.client.get('/api/analytics').json()['total'], total + 1)
+
+    def test_comments_without_a_status_change(self):
+        base = f'/api/tickets/{self.ticket}'
+        posted = self.client.post(base + '/comments', headers=self.headers, json={'text': 'Seen on a phone too'})
+        self.assertEqual(posted.status_code, 201, posted.text)
+        listed = self.client.get(base + '/comments').json()['comments']
+        self.assertEqual(len(listed), 1)
+        self.assertIn('Seen on a phone too', listed[0]['body'])
+        self.assertTrue(listed[0]['body'].startswith('**Comment** by '))
+        self.assertEqual(self.client.post(base + '/comments', headers=self.headers, json={'text': '  '}).status_code, 422)
+        self.assertEqual(self.client.post(base + '/comments', headers={'X-QA-Request': '1'},
+                                          json={'text': 'x'}).status_code, 403)
+        self.assertEqual(self.client.get('/api/tickets/9999/comments').status_code, 404)
+        self.client.cookies.clear()
+        self.assertEqual(self.client.get(base + '/comments').status_code, 401)
+
+    def test_only_an_admin_can_approve_a_request(self):
+        request = self.create(kind='request').json()['ticket']['id']
+        url = f'/api/tickets/{request}/approve'
+        self.assertEqual(self.client.post(url, headers=self.headers).status_code, 403)    # tester
+        self.sign_in('dev@example.test')
+        self.assertEqual(self.client.post(url, headers=self.headers).status_code, 403)    # developer
+        self.sign_in('admin@example.test')
+        approved = self.client.post(url, headers=self.headers)
+        self.assertEqual(approved.status_code, 201, approved.text)
+        thread = self.client.get(f'/api/tickets/{request}/comments').json()['comments']
+        first_line = thread[-1]['body'].splitlines()[0]
+        self.assertTrue(first_line.startswith('**Go: approved** by ') and first_line.endswith(' via PERPERIS QA'))
+        # A bug is fixed without a Go.
+        self.assertEqual(self.client.post(f'/api/tickets/{self.ticket}/approve', headers=self.headers).status_code, 409)
+        self.assertEqual(self.client.post('/api/tickets/9999/approve', headers=self.headers).status_code, 404)
+
     def test_auth_origin_and_ticket_are_required(self):
         item = self.upload().json()['screenshot']
         self.client.cookies.clear()

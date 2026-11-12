@@ -57,7 +57,7 @@ aside. Issues live in `kattens-pt`; the QA code stays here, in
 
 | QA concept | GitHub |
 |---|---|
-| Ticket | Issue (label `qa`, plus `bug` or `task`) |
+| Ticket | Issue (label `qa`, plus the type: `bug`, `task` or `question`; see below) |
 | Testing round R05 | Milestone `R05` |
 | Severity | Labels `sev:critical` / `sev:high` / `sev:medium` / `sev:low` |
 | Area | Labels `area:<name>` (e.g. `area:library`, `area:today`) |
@@ -65,6 +65,15 @@ aside. Issues live in `kattens-pt`; the QA code stays here, in
 | Steps, expected/actual, environment, deploy # | Fixed headings in the issue body |
 | Reporter / verifier | Line "Reported by `<name>` via PERPERIS QA" / "Verified by `<name>`" |
 | Discussion, resolution notes | Issue comments |
+
+**Report type (2026-11-12).** The report form has a Type: **Bug** (label `bug`, something is broken; fixed by the
+autopilot, small presentation fixes merged), **Request** (label `task`, a change or new feature; the autopilot posts
+its approach and builds it as a pull request only after a **Go**, and never merges it) and **Question or feedback**
+(label `question`, discussion only; not counted in the statistics). A **Go** is the button "Approve (Go)" in the
+ticket dialog, available to Admins only for requests; it posts the first line `**Go: approved** by <name> via
+PERPERIS QA`, which only that endpoint can write. The autopilot reads that first line, never text further down.
+The ticket dialog also shows the issue's comments and lets any member add a plain comment
+(`**Comment** by <name> via PERPERIS QA`) without changing the status.
 
 Lifecycle: QA "New bug" creates the issue → triage in QA sets labels → a PR
 merges referencing it → `deploy-cloud-run` in `kattens-pt` adds
