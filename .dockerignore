@@ -8,10 +8,12 @@
 !runtime_guard.py
 !github_issues.py
 !screenshots.py
+!previews.py
 !static/
 static/**
 !static/index.html
 !static/app.js
+!static/previews.js
 !static/auth.js
 !static/attachments.js
 !static/theme.js
