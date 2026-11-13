@@ -68,7 +68,7 @@ async function refresh(){
 }
 
 /* ---------- routing ---------- */
-const VIEWS = ['today','tickets'];
+const VIEWS = ['today','tickets','previews'];
 /* #ticket-N (the link in the GitHub screenshot comment) opens that ticket on the Tickets view. */
 function deepLink(){const m=location.hash.match(/^#ticket-(\d+)$/);return m?Number(m[1]):null;}
 function currentView(){if(deepLink())return 'tickets';const v=location.hash.slice(1);return VIEWS.includes(v)?v:'today';}
@@ -77,7 +77,8 @@ function route(){
   const view=currentView();
   VIEWS.forEach(v=>$(`view-${v}`).classList.toggle('hidden',v!==view));
   document.querySelectorAll('[data-view]').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  document.title=`PERPERIS / QA — ${view==='today'?'Today':'Tickets'}`;
+  document.title=`PERPERIS / QA — ${{today:'Today',tickets:'Tickets',previews:'Previews'}[view]}`;
+  if(view==='previews')qaPreviews.show();
   window.scrollTo(0,0);
   openDeepLink();
 }
@@ -283,6 +284,7 @@ function openEdit(id){
   /* No preselected change: saving without choosing is refused by the browser (required) and the server. */
   $('edit-status').innerHTML='<option value="" disabled selected>Change status…</option>'+allowedStatuses().map(s=>`<option value="${s}">${label(s)}</option>`).join('');
   qaThread.open(ticket);
+  qaPreviews.annotate(id);
   setModal(true);
 }
 /* ---------- conversation: GitHub comments, plain comments, Approve (Go) ---------- */

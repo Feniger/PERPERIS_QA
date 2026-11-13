@@ -20,6 +20,12 @@ class QATests(unittest.TestCase):
     def login(self):
         self.assertEqual(self.client.post('/api/login', json={'password': 'test-password-long-unique'}).status_code, 200)
 
+    def test_previews_off_without_github_and_bucket(self):
+        self.assertEqual(self.client.get('/api/previews').status_code, 401)
+        self.login()
+        self.assertEqual(self.client.get('/api/previews').json(), {'enabled': False, 'main': None, 'pulls': []})
+        self.assertEqual(self.client.get('/api/previews/' + 'a' * 40).status_code, 404)
+
     def test_secure_default_and_login(self):
         self.assertEqual(self.client.get('/api/tickets').status_code, 401)
         self.assertEqual(self.client.post('/api/login', json={'password': 'wrong'}).status_code, 401)
