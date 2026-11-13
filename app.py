@@ -501,6 +501,8 @@ def preview_errors(action):
         return action()
     except previews.PreviewNotFound:
         raise HTTPException(404, 'No preview for that commit') from None
+    except previews.Forbidden as error:
+        raise HTTPException(502, f'{error} QA\'s GitHub App needs "Actions: Read-only" (and "Issues: Read") on the app repository.') from None
     except previews.PreviewsUnavailable as error:
         raise HTTPException(502, str(error)) from None
     except github_issues.GitHubUnavailable:
