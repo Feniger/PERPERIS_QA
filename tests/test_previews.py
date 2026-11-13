@@ -142,3 +142,32 @@ class ApiTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TokenRefreshTests(unittest.TestCase):
+    def test_a_403_drops_the_cached_token_and_retries_once(self):
+        import threading
+        from types import SimpleNamespace
+
+        class Resp:
+            def __init__(self, status, body):
+                self.status_code, self._body = status, body
+
+            def json(self):
+                return self._body
+
+        calls = []
+
+        class Client:
+            def get(self, path, params=None, headers=None):
+                calls.append(headers['Authorization'])
+                return Resp(403, {}) if len(calls) == 1 else Resp(200, {'artifacts': []})
+
+        issued = iter(['old', 'new'])
+        github = SimpleNamespace(config=SimpleNamespace(repo='o/r'), _client=Client(), _token=('old', 0),
+                                 _token_lock=threading.Lock())
+        github._installation_token = lambda: next(issued)
+        source = previews.GitHubPreviewSource(github)
+        self.assertEqual(source.artifacts(), [])
+        self.assertEqual(calls, ['token old', 'token new'])
+        self.assertIsNone(github._token)

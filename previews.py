@@ -53,14 +53,24 @@ class GitHubPreviewSource:
         self.github = github
         self.repo = github.config.repo
 
-    def _get(self, path: str, params: dict | None = None):
+    def _fresh_access(self):
+        # An installation token keeps the permissions it was issued with (up to an hour); after a
+        # permission change, drop it so the next request gets one with the new permissions.
+        with self.github._token_lock:
+            self.github._token = None
+
+    def _get(self, path: str, params: dict | None = None, *, retried: bool = False):
         headers = {'Authorization': f'token {self.github._installation_token()}'}
         try:
             response = self.github._client.get(path, params=params, headers=headers)
         except httpx.HTTPError:
             raise PreviewsUnavailable('GitHub could not be reached') from None
+        if response.status_code in (403, 404) and not retried:
+            self._fresh_access()
+            return self._get(path, params, retried=True)
         if response.status_code == 403:
-            raise PreviewsUnavailable('QA cannot read CI results yet (the GitHub App needs Actions: read)')
+            raise PreviewsUnavailable("QA's GitHub App cannot read the app's CI results yet. "
+                                      'Give it "Actions: Read-only" and accept the change on the installation.')
         if response.status_code != 200:
             raise PreviewsUnavailable(f'GitHub read failed ({response.status_code})')
         return response.json()
