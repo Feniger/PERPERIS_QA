@@ -171,3 +171,33 @@ class TokenRefreshTests(unittest.TestCase):
         self.assertEqual(source.artifacts(), [])
         self.assertEqual(calls, ['token old', 'token new'])
         self.assertIsNone(github._token)
+
+
+class PullsFallbackTests(unittest.TestCase):
+    def test_without_pull_request_permission_uses_issues_and_ci_runs(self):
+        import threading
+        from types import SimpleNamespace
+
+        class Resp:
+            def __init__(self, status, body):
+                self.status_code, self._body = status, body
+
+            def json(self):
+                return self._body
+
+        class Client:
+            def get(self, path, params=None, headers=None):
+                if path.endswith('/pulls'):
+                    return Resp(403, {})
+                if path.endswith('/issues'):
+                    return Resp(200, [{'number': 7, 'title': 'Pink', 'html_url': 'u', 'pull_request': {}},
+                                      {'number': 9, 'title': 'A bug report'}])
+                return Resp(200, {'workflow_runs': [
+                    {'created_at': '1', 'head_sha': 'old', 'head_branch': 'b', 'pull_requests': [{'number': 7}]},
+                    {'created_at': '2', 'head_sha': SHA_PR, 'head_branch': 'qa-feature/42-pink', 'pull_requests': [{'number': 7}]}]})
+
+        github = SimpleNamespace(config=SimpleNamespace(repo='o/r'), _client=Client(), _token=None,
+                                 _token_lock=threading.Lock(), _installation_token=lambda: 't')
+        pulls = previews.GitHubPreviewSource(github).open_pulls()
+        self.assertEqual([(p['number'], p['head']['sha'], p['head']['ref']) for p in pulls],
+                         [(7, SHA_PR, 'qa-feature/42-pink')])

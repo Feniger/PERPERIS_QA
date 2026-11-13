@@ -46,6 +46,10 @@ class PreviewNotFound(LookupError):
     pass
 
 
+class Forbidden(PreviewsUnavailable):
+    """GitHub refused one request for lack of a permission; names the request."""
+
+
 class GitHubPreviewSource:
     """Reads pull requests and CI artifacts with QA's GitHub App (needs Actions: read)."""
 
@@ -68,15 +72,34 @@ class GitHubPreviewSource:
         if response.status_code in (403, 404) and not retried:
             self._fresh_access()
             return self._get(path, params, retried=True)
-        if response.status_code == 403:
-            raise PreviewsUnavailable("QA's GitHub App cannot read the app's CI results yet. "
-                                      'Give it "Actions: Read-only" and accept the change on the installation.')
+        if response.status_code in (403, 404):
+            what = path.rsplit('/', 1)[-1] if '/actions/' not in path else 'actions/' + path.split('/actions/', 1)[1]
+            raise Forbidden(f'GitHub refused QA access to {what} ({response.status_code}).')
         if response.status_code != 200:
             raise PreviewsUnavailable(f'GitHub read failed ({response.status_code})')
         return response.json()
 
     def open_pulls(self) -> list[dict]:
-        return self._get(f'/repos/{self.repo}/pulls', {'state': 'open', 'per_page': 50})
+        try:
+            return self._get(f'/repos/{self.repo}/pulls', {'state': 'open', 'per_page': 50})
+        except Forbidden:
+            return self._open_pulls_from_issues_and_runs()
+
+    def _open_pulls_from_issues_and_runs(self) -> list[dict]:
+        """Without "Pull requests: read": open PRs from the issues list (titles) and their newest
+        CI run (branch and commit), both readable with Issues and Actions permissions."""
+        issues = [i for i in self._get(f'/repos/{self.repo}/issues', {'state': 'open', 'per_page': 100})
+                  if i.get('pull_request')]
+        runs = self._get(f'/repos/{self.repo}/actions/runs',
+                         {'event': 'pull_request', 'per_page': 100}).get('workflow_runs', [])
+        newest: dict[int, dict] = {}
+        for run in sorted(runs, key=lambda r: r.get('created_at') or ''):
+            for pr in run.get('pull_requests') or []:
+                newest[pr.get('number')] = {'sha': run.get('head_sha') or '', 'ref': run.get('head_branch') or ''}
+        return [{'number': i.get('number'), 'title': i.get('title') or '', 'draft': bool(i.get('draft')),
+                 'html_url': i.get('html_url') or '', 'updated_at': i.get('updated_at'),
+                 'head': newest.get(i.get('number'), {'sha': '', 'ref': ''})}
+                for i in issues]
 
     def artifacts(self) -> list[dict]:
         data = self._get(f'/repos/{self.repo}/actions/artifacts', {'name': ARTIFACT, 'per_page': 100})
