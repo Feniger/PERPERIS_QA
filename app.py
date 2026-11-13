@@ -19,6 +19,7 @@ import identity
 import runtime_guard
 import github_issues
 import screenshots
+import previews
 
 ROOT = Path(__file__).resolve().parent
 ADMIN_PASSWORD = os.getenv('PERPERIS_QA_PASSWORD', '')
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
         if store is not None:
             store.check_private()   # staging refuses to start unless the bucket is private
         APP.state.screenshots = screenshots.Screenshots(store) if store is not None else None
+        # UI previews of app pull requests need GitHub tickets and the private bucket (DEC-526).
+        APP.state.previews = (previews.Previews(previews.GitHubPreviewSource(APP.state.tickets), store)
+                              if store is not None and isinstance(APP.state.tickets, github_issues.GitHubIssues)
+                              else None)
         yield
     finally:
         source = getattr(APP.state, 'tickets', None)
@@ -47,6 +52,7 @@ async def lifespan(app: FastAPI):
             source.close()
         APP.state.tickets = None
         APP.state.screenshots = None
+        APP.state.previews = None
 
 
 APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -148,7 +154,7 @@ def index():
 
 # Fixed allowlist: nothing else under static/ is ever served.
 STATIC_FILES = {
-    'app.js': None, 'styles.css': None, 'auth.js': None, 'attachments.js': None, 'theme.js': None,
+    'app.js': None, 'previews.js': None, 'styles.css': None, 'auth.js': None, 'attachments.js': None, 'theme.js': None,
     'icon.svg': 'image/svg+xml', 'icon-16.png': 'image/png', 'icon-32.png': 'image/png',
     'icon-180.png': 'image/png', 'icon-192.png': 'image/png', 'icon-512.png': 'image/png',
     'manifest.webmanifest': 'application/manifest+json',
@@ -484,6 +490,49 @@ def delete_screenshot(ticket_id: int, name: str, request: Request, user: identit
     identity.security_event(user.subject, str(ticket_id), 'screenshot_deleted')
     update_screenshot_comment(ticket_id, qa_origin(request), user)
     return Response(status_code=204)
+
+
+def preview_service():
+    return getattr(APP.state, 'previews', None)
+
+
+def preview_errors(action):
+    try:
+        return action()
+    except previews.PreviewNotFound:
+        raise HTTPException(404, 'No preview for that commit') from None
+    except previews.PreviewsUnavailable as error:
+        raise HTTPException(502, str(error)) from None
+    except github_issues.GitHubUnavailable:
+        raise HTTPException(502, 'GitHub could not be read. Try again shortly.') from None
+    except Exception:
+        raise HTTPException(503, 'Previews are temporarily unavailable; retry') from None
+
+
+@APP.get('/api/previews')
+def list_previews(user: identity.Principal = Depends(current_user)):
+    service = preview_service()
+    if service is None:
+        return {'enabled': False, 'main': None, 'pulls': []}
+    return {'enabled': True, **preview_errors(service.listing)}
+
+
+@APP.get('/api/previews/{sha}')
+def preview_manifest(sha: str, user: identity.Principal = Depends(current_user)):
+    service = preview_service()
+    if service is None:
+        raise HTTPException(404, 'Previews are not enabled')
+    return preview_errors(lambda: service.manifest(sha))
+
+
+@APP.get('/api/previews/{sha}/{name}')
+def preview_image(sha: str, name: str, user: identity.Principal = Depends(current_user)):
+    service = preview_service()
+    if service is None:
+        raise HTTPException(404, 'Previews are not enabled')
+    data = preview_errors(lambda: service.image(sha, name))
+    # Addressed by commit and file name, so the bytes never change; private to the signed-in browser.
+    return Response(content=data, media_type='image/png', headers={'Cache-Control': 'private, max-age=86400'})
 
 
 @APP.middleware('http')

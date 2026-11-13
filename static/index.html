@@ -49,6 +49,7 @@
     <nav aria-label="Primary" class="nav">
       <a class="nav-link" href="#today" data-view="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>Today</a>
       <a class="nav-link" href="#tickets" data-view="tickets"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Tickets<b id="nav-count" class="nav-count" aria-label="open tickets">0</b></a>
+      <a class="nav-link" href="#previews" data-view="previews"><svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></svg>Previews<b id="nav-previews" class="nav-count hidden" aria-label="pull requests with previews">0</b></a>
       <p class="nav-group">Next milestones</p>
       <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Workspace<em>Next</em></span>
       <span class="nav-link is-disabled" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/></svg>Testing rounds<em>Next</em></span>
@@ -203,6 +204,28 @@
       <p id="empty" class="empty hidden">No matching tickets. Report an issue or adjust the filters.</p>
     </section>
 
+    <!-- PREVIEWS: screenshots of the app's open pull requests (kattens-pt DEC-526) -->
+    <section id="view-previews" class="view hidden" aria-labelledby="previews-title">
+      <header class="title-block">
+        <h1 class="page-title" id="previews-title">Previews</h1>
+        <p class="preview-intro">How each open change in the training app looks, before it goes live. Sample data, phone size. Before = the live app now, after = the change.</p>
+      </header>
+      <p id="previews-status" class="screenshot-meta" aria-live="polite"></p>
+      <div id="preview-pulls" class="preview-pulls"></div>
+      <div id="preview-detail" class="preview-detail hidden">
+        <div class="preview-bar">
+          <h2 class="preview-heading" id="preview-heading"></h2>
+          <div class="preview-controls" role="group" aria-label="Preview options">
+            <button type="button" class="seg" data-preview-theme="light" aria-pressed="true">Light</button>
+            <button type="button" class="seg" data-preview-theme="dark" aria-pressed="false">Dark</button>
+            <button type="button" class="seg" data-preview-compare aria-pressed="true">Before | after</button>
+          </div>
+        </div>
+        <p id="preview-notes" class="screenshot-meta"></p>
+        <div id="preview-screens" class="preview-screens"></div>
+      </div>
+    </section>
+
     <footer class="foot">PERPERIS QA · Prototype · Independent of the PERPERIS training app</footer>
   </main>
 
@@ -210,6 +233,7 @@
     <a href="#today" data-view="today">Today</a>
     <button type="button" class="bottom-new" data-new-ticket>＋ New report</button>
     <a href="#tickets" data-view="tickets">Tickets</a>
+    <a href="#previews" data-view="previews">Previews</a>
   </nav>
 </div>
 
@@ -237,6 +261,7 @@
       </div>
       <div id="update-fields" class="hidden">
         <div id="ticket-detail" class="detail-text"></div>
+        <p id="ticket-preview" class="ticket-preview hidden"></p>
         <div class="form-grid">
           <label class="field">Status<select name="status" id="edit-status" required></select></label>
         </div>
@@ -275,6 +300,7 @@
 
 <script src="/static/auth.js"></script>
 <script src="/static/attachments.js"></script>
+<script src="/static/previews.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
