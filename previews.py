@@ -89,7 +89,7 @@ class GitHubPreviewSource:
         """Without "Pull requests: read": open PRs from the issues list (titles) and their newest
         CI run (branch and commit), both readable with Issues and Actions permissions."""
         issues = [i for i in self._get(f'/repos/{self.repo}/issues', {'state': 'open', 'per_page': 100})
-                  if i.get('pull_request')]
+                  if 'pull_request' in i]
         runs = self._get(f'/repos/{self.repo}/actions/runs',
                          {'event': 'pull_request', 'per_page': 100}).get('workflow_runs', [])
         newest: dict[int, dict] = {}
