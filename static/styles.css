@@ -329,7 +329,10 @@ html[data-theme="dark"] .error { color: oklch(0.75 0.17 22); }
 html[data-theme="dark"] .modal-overlay { background: oklch(0 0 0 / 0.65); }
 
 /* ---------- Previews (kattens-pt DEC-526) ---------- */
-.preview-intro { margin: 0.25rem 0 0; max-width: 46rem; color: var(--muted); }
+.preview-intro { margin: 0.75rem 0 0; max-width: 40rem; color: var(--muted); }
+.preview-notice { margin: 1.25rem 0 0; max-width: 40rem; padding: 0.875rem 1rem; border: 1px solid var(--line, var(--surface-2)); border-left: 4px solid var(--muted); background: var(--surface-1); }
+.preview-notice.is-problem { border-left-color: var(--yellow); }
+.preview-notice strong { display: block; margin-bottom: 0.25rem; font: 600 0.8125rem/1.2 var(--font-text); letter-spacing: 0.08em; text-transform: uppercase; }
 .preview-pulls { display: grid; gap: 0.5rem; margin: 1rem 0; }
 .preview-pull { display: grid; grid-template-columns: 1fr auto; gap: 0.25rem 1rem; align-items: center; width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--ink); border-left: 4px solid var(--blue); background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
 .preview-pull[aria-pressed="true"] { border-left-color: var(--pink); background: var(--surface-1); }

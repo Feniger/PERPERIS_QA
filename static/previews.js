@@ -33,12 +33,19 @@ const qaPreviews = (() => {
     return manifests.get(sha);
   }
 
+  function notice(text, title = '', problem = false) {
+    const box = el('previews-status');
+    box.classList.toggle('hidden', !text);
+    box.classList.toggle('is-problem', problem);
+    box.innerHTML = text ? `${title ? `<strong>${esc(title)}</strong>` : ''}${esc(text)}` : '';
+  }
+
   function renderPulls() {
     const mount = el('preview-pulls');
     mount.replaceChildren();
-    if (!listing.enabled) { el('previews-status').textContent = 'Previews are not switched on for this QA instance.'; return; }
-    if (!listing.pulls.length) { el('previews-status').textContent = 'No open changes in the training app right now.'; return; }
-    el('previews-status').textContent = listing.main ? '' : 'No "before" pictures yet: they appear after the next change goes live.';
+    if (!listing.enabled) { notice('Previews are not switched on for this QA instance.', 'Not available'); return; }
+    if (!listing.pulls.length) { notice('Nothing is waiting to go live. Changes appear here while they are being reviewed.', 'No open changes'); return; }
+    notice(listing.main ? '' : 'They appear once the next change has gone live.', listing.main ? '' : 'No "before" pictures yet');
     for (const p of listing.pulls) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -115,7 +122,7 @@ const qaPreviews = (() => {
 
   return {
     async show() {
-      el('previews-status').textContent = 'Loading…';
+      notice('Loading open changes…');
       try {
         await load();
         const wanted = Number(new URLSearchParams(location.hash.split('?')[1] || '').get('pr')) || selected;
@@ -123,7 +130,7 @@ const qaPreviews = (() => {
         renderPulls();
         renderDetail();
       } catch (e) {
-        el('previews-status').textContent = e.message;
+        notice(e.message, 'Previews unavailable', true);
       }
     },
     /* Ticket detail: "Preview ready" link when a change for this ticket has pictures. */
