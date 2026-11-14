@@ -33,7 +33,7 @@ secrets.
   in the report dialog or on a ticket, thumbnails, one "📎 N screenshots" comment
   on the issue, deleted 30 days after Verify and after 365 days at the latest
   (see `docs/QA-GITHUB-FRONTEND.md`, decision 4.1)
-- Staging is live: https://perperis-qa-staging-982639404002.europe-north1.run.app
+- Staging is live: https://qa.lokalen.nu
   (members only; see `docs/QA-CLOUD-06-STAGING.md`)
 - App icon and home-screen install: a Q in the PERPERIS K's style (`static/icon.svg`; PNGs rendered
   with `python tools/render_icons.py`), web manifest "PERPERIS QA" / "QA"

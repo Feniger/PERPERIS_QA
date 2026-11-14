@@ -11,7 +11,7 @@ Staging is the QA app on Cloud Run in QA's own Google project,
 `kattens-pt`). It reads and writes issues in `krummb/kattens-pt` through the
 "PERPERIS QA" GitHub App and nothing else of the training app.
 
-- Address: **https://perperis-qa-staging-982639404002.europe-north1.run.app**.
+- Address: **https://qa.lokalen.nu** (Cloud Run domain mapping, DNS at Loopia, since 2026-11-14; the run.app address no longer signs in).
   Cloud Run also answers on an older-style address
   (`…-vfgmkr7thq-lz.a.run.app`); sign-in does not work there because it is not
   the configured origin, so always share the address above.
@@ -108,7 +108,7 @@ metadata `uploader` (identity subject, never an email), `uploader_name`,
    PR 2). Staging refuses to start if the bucket is not private.
 6. **Webhooks (optional, live updates)**: GitHub > Settings > Developer
    settings > GitHub Apps > PERPERIS QA > Webhook: active, URL
-   `https://perperis-qa-staging-982639404002.europe-north1.run.app/api/github/webhook`,
+   `https://qa.lokalen.nu/api/github/webhook`,
    secret = the value of `perperis-qa-webhook-secret` (owner copies it from
    Secret Manager); subscribe to Issues, Issue comment, Label and Milestone.
    Do not subscribe to Pull request: that event needs a Pull requests
