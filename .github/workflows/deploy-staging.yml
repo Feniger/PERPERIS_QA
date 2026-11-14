@@ -21,7 +21,7 @@ env:
   PROJECT_ID: perperis-qa-staging
   REGION: europe-north1
   SERVICE: perperis-qa-staging
-  ORIGIN: https://perperis-qa-staging-982639404002.europe-north1.run.app
+  ORIGIN: https://qa.lokalen.nu
   WIF_PROVIDER: projects/982639404002/locations/global/workloadIdentityPools/github/providers/perperis-qa
   DEPLOYER_SA: qa-deployer@perperis-qa-staging.iam.gserviceaccount.com
   RUNTIME_SA: qa-runtime@perperis-qa-staging.iam.gserviceaccount.com
@@ -79,7 +79,7 @@ jobs:
             --set-secrets "PERPERIS_QA_SECRET=perperis-qa-secret:latest,PERPERIS_QA_MEMBERS=perperis-qa-members:latest,PERPERIS_QA_GITHUB_PRIVATE_KEY=perperis-qa-github-key:latest,PERPERIS_QA_IDENTITY_WEB_API_KEY=perperis-qa-web-api-key:latest,PERPERIS_QA_GITHUB_WEBHOOK_SECRET=perperis-qa-webhook-secret:latest" \
             --allow-unauthenticated
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"
-          # Cloud Run reports its older-style address; sign-in only works on $ORIGIN.
+          # Sign-in only works on $ORIGIN (qa.lokalen.nu, Cloud Run domain mapping since 2026-11-14).
           echo "Deployed: $ORIGIN (Cloud Run also lists $url, where sign-in does not work)"
 
       - name: Smoke test
