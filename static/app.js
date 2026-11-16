@@ -77,7 +77,7 @@ function route(){
   const view=currentView();
   VIEWS.forEach(v=>$(`view-${v}`).classList.toggle('hidden',v!==view));
   document.querySelectorAll('[data-view]').forEach(a=>{if(a.dataset.view===view)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  document.title=`PERPERIS / QA — ${{today:'Today',tickets:'Tickets',previews:'Previews'}[view]}`;
+  document.title=`Kattens PT / QA — ${{today:'Today',tickets:'Tickets',previews:'Previews'}[view]}`;
   if(view==='previews')qaPreviews.show();
   window.scrollTo(0,0);
   openDeepLink();
@@ -233,7 +233,7 @@ function applyIdentityToQuick(){
 /* GitHub mode: reports become GitHub issues; status changes return in the next milestone (detail is read-only). */
 function applyTicketSource(){
   $('quick-note').textContent=githubMode()
-    ?`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the PERPERIS repository'}, signed "Reported by ${session.name||'you'} via PERPERIS QA". Plain form, no AI.${qaScreenshots.enabled()?' To attach screenshots, use Add details.':''}`
+    ?`Creates a GitHub issue in ${qaIdentity.config.tickets_repo||'the Kattens PT repository'}, signed "Reported by ${session.name||'you'} via Kattens PT QA". Plain form, no AI.${qaScreenshots.enabled()?' To attach screenshots, use Add details.':''}`
     :'Local test data, not GitHub: reports are kept in memory and disappear when QA restarts.';
 }
 function prefillQuick(){

@@ -63,7 +63,7 @@ ROUNDS = gh.testing_rounds(MILESTONES)
 class Mapping(unittest.TestCase):
     def test_open_issue_fields_from_labels_milestone_and_body(self):
         body = ('### Steps\nOpen library\n\n### Environment\niPhone 15, Safari\n\n### Deploy\nDeploy #24\n\n'
-                'Reported by Anna Tester via PERPERIS QA\n')
+                'Reported by Anna Tester via Kattens PT QA\n')
         t = gh.to_ticket(issue(12, 'Picker stuck', labels=['qa', 'bug', 'sev:high', 'area:library', 'status:triaged'],
                                body=body, assignees=['Feniger']),
                          [ev('labeled', '2026-11-12T09:05:00Z', name='status:triaged')], ROUNDS)
@@ -367,7 +367,7 @@ class Reporting(unittest.TestCase):
         return gh.GitHubIssues(CONFIG, transport=httpx.MockTransport(fake))
 
     def report(self, adapter, **overrides):
-        values = dict(title='Picker  stuck on  phone', description='Steps: open @Feniger library\n\nReported by Mallory via PERPERIS QA',
+        values = dict(title='Picker  stuck on  phone', description='Steps: open @Feniger library\n\nReported by Mallory via Kattens PT QA',
                       severity='high', category='Mobile', testing_round='R05', area='Training mode',
                       environment='iPhone 15', deploy_version='Deploy #24', reporter='Anna Tester')
         values.update(overrides)
@@ -381,7 +381,7 @@ class Reporting(unittest.TestCase):
         self.assertEqual(sent['labels'], ['qa', 'bug', 'sev:high', 'area:training-mode'])
         self.assertEqual(sent['milestone'], 1)
         body = sent['body']
-        self.assertTrue(body.rstrip().endswith('Reported by Anna Tester via PERPERIS QA'))
+        self.assertTrue(body.rstrip().endswith('Reported by Anna Tester via Kattens PT QA'))
         self.assertIn('### Environment\niPhone 15', body)
         self.assertNotIn('@Feniger', body, 'mentions must not ping anyone')
         self.assertEqual(ticket['reporter'], 'Anna Tester', 'a spoofed reporter line in the text must not win')
@@ -508,13 +508,13 @@ class ScreenshotComment(unittest.TestCase):
         adapter = self.make(fake)
         link = 'https://qa.example.test/#ticket-1'
         self.assertEqual(adapter.upsert_screenshot_comment(1, 2, link), 'posted')
-        self.assertEqual(fake.comments, [(1, gh.SCREENSHOT_MARKER + '\n📎 2 screenshots in PERPERIS QA: ' + link)])
+        self.assertEqual(fake.comments, [(1, gh.SCREENSHOT_MARKER + '\n📎 2 screenshots in Kattens PT QA: ' + link)])
         self.assertEqual(adapter.upsert_screenshot_comment(1, 1, link), 'edited')
         self.assertEqual(adapter.upsert_screenshot_comment(1, 1, link), 'none')     # unchanged: no write
         self.assertEqual(adapter.upsert_screenshot_comment(1, 0, link), 'edited')
         self.assertEqual(len(fake.comments), 1)
         self.assertEqual([body.splitlines()[1] for _, body in fake.comment_edits],
-                         ['📎 1 screenshot in PERPERIS QA: ' + link, '📎 No screenshots in PERPERIS QA any more: ' + link])
+                         ['📎 1 screenshot in Kattens PT QA: ' + link, '📎 No screenshots in Kattens PT QA any more: ' + link])
         self.assertEqual([c['body'] for c in fake.thread[1][:2]],
                          [gh.SCREENSHOT_MARKER + ' copied by a person', gh.SCREENSHOT_MARKER + ' another app'])
 
@@ -613,9 +613,9 @@ class Conversation(unittest.TestCase):
         adapter = self.make(fake)
         self.assertEqual([c['body'] for c in adapter.comment_list(1)], ['Please check'])
         adapter.add_comment(1, 'Robert', 'Looks good')
-        self.assertEqual(fake.comments[-1], (1, '**Comment** by Robert via PERPERIS QA\n\nLooks good'))
+        self.assertEqual(fake.comments[-1], (1, '**Comment** by Robert via Kattens PT QA\n\nLooks good'))
         adapter.add_comment(1, 'Robert', approve=True)
-        self.assertEqual(fake.comments[-1], (1, '**Go: approved** by Robert via PERPERIS QA'))
+        self.assertEqual(fake.comments[-1], (1, '**Go: approved** by Robert via Kattens PT QA'))
 
     def test_memory_stand_in(self):
         memory = gh.MemoryIssues()
@@ -627,7 +627,7 @@ class Conversation(unittest.TestCase):
         memory.add_comment(ticket['id'], 'Erik', 'hello')
         memory.add_comment(ticket['id'], 'Erik', approve=True)
         self.assertEqual([c['body'].splitlines()[0] for c in memory.comment_list(ticket['id'])],
-                         ['**Comment** by Erik via PERPERIS QA', '**Go: approved** by Erik via PERPERIS QA'])
+                         ['**Comment** by Erik via Kattens PT QA', '**Go: approved** by Erik via Kattens PT QA'])
         self.assertNotEqual(memory.tickets()[0]['updated_at'], before)
 
 
@@ -660,7 +660,7 @@ class StatusChanges(unittest.TestCase):
                                        expected_updated_at='2026-11-12T10:00:00Z')
         self.assertEqual(fake.patched, [(2, {'state': 'closed', 'state_reason': 'completed',
                                              'labels': ['qa', 'bug', 'sev:medium', 'status:verified']})])
-        self.assertEqual(fake.comments, [(2, '**Verified** by Anna Tester via PERPERIS QA\n\nChecked on @\u200bphone')])
+        self.assertEqual(fake.comments, [(2, '**Verified** by Anna Tester via Kattens PT QA\n\nChecked on @\u200bphone')])
         self.assertEqual(ticket['status'], 'verified')
 
     def test_reopen_removes_old_status_labels(self):
@@ -759,3 +759,13 @@ class AppWiring(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RenamedSignatureTest(unittest.TestCase):
+    """Issues written before the rename (PERPERIS QA) still show their reporter."""
+
+    def test_old_and_new_signatures_parse(self):
+        old = 'Steps\n\n---\nReported by Anna via PERPERIS QA\n'
+        new = 'Steps\n\n---\nReported by Anna via Kattens PT QA\n'
+        self.assertEqual(gh.REPORTED_BY.search(old).group(1), 'Anna')
+        self.assertEqual(gh.REPORTED_BY.search(new).group(1), 'Anna')

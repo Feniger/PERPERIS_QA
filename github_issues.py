@@ -1,7 +1,7 @@
 """GitHub issues adapter: tickets are GitHub issues (QA milestones 1 and 2).
 
 Tickets are GitHub issues labelled `qa` in one repository (default
-`krummb/kattens-pt`), read through the "PERPERIS QA" GitHub App. See
+`krummb/kattens-pt`), read through the "Kattens PT QA" GitHub App. See
 docs/QA-GITHUB-FRONTEND.md for the conventions this module implements.
 
 Everything shown is derived from GitHub data on each read (issue fields,
@@ -35,7 +35,7 @@ STATUS_LABELS = (
     ('status:triaged', 'triaged'),
 )
 NOT_FIXED_REASONS = {'not_planned', 'duplicate'}
-REPORTED_BY = re.compile(r'^Reported by (.{1,100}?) via PERPERIS QA\s*$', re.MULTILINE)
+REPORTED_BY = re.compile(r'^Reported by (.{1,100}?) via (?:PERPERIS|Kattens PT) QA\s*$', re.MULTILINE)
 MAX_PAGES = 20
 # Area labels created in the repository (owner-approved list, 2026-11-11).
 AREAS = ('today', 'coach', 'workouts', 'library', 'training-mode', 'progress', 'settings', 'admin', 'auth')
@@ -91,7 +91,7 @@ def status_patch(issue: dict, status: str) -> dict:
 
 
 def status_comment(status: str, actor: str, comment: str) -> str:
-    head = f'**{STATUS_WORDS[status]}** by {neutralize(" ".join(actor.split()))} via PERPERIS QA'
+    head = f'**{STATUS_WORDS[status]}** by {neutralize(" ".join(actor.split()))} via Kattens PT QA'
     return head + ('\n\n' + neutralize(comment.strip()) if comment.strip() else '')
 
 
@@ -100,8 +100,8 @@ def note_comment(actor: str, text: str, *, approve: bool = False) -> str:
     that only the Admin-only approve endpoint writes (the autopilot reads that line, never the text below it)."""
     who = neutralize(" ".join(actor.split()))
     if approve:
-        return f'**Go: approved** by {who} via PERPERIS QA'
-    return f'**Comment** by {who} via PERPERIS QA\n\n' + neutralize(text.strip())
+        return f'**Go: approved** by {who} via Kattens PT QA'
+    return f'**Comment** by {who} via Kattens PT QA\n\n' + neutralize(text.strip())
 
 
 SCREENSHOT_MARKER = '<!-- perperis-qa:screenshots -->'
@@ -123,9 +123,9 @@ def comment_view(comment: dict) -> dict | None:
 def screenshot_comment(count: int, link: str) -> str:
     """The single bot comment per issue that points to its screenshots in QA (edited, never reposted)."""
     if count <= 0:
-        return f'{SCREENSHOT_MARKER}\n📎 No screenshots in PERPERIS QA any more: {link}'
+        return f'{SCREENSHOT_MARKER}\n📎 No screenshots in Kattens PT QA any more: {link}'
     plural = 's' if count != 1 else ''
-    return f'{SCREENSHOT_MARKER}\n📎 {count} screenshot{plural} in PERPERIS QA: {link}'
+    return f'{SCREENSHOT_MARKER}\n📎 {count} screenshot{plural} in Kattens PT QA: {link}'
 
 
 @dataclass(frozen=True)
@@ -227,7 +227,7 @@ def issue_body(*, description: str, environment: str, deploy_version: str, categ
     if area and not area_label(area):
         parts.append(f'### Area\n{one_line(area)}')
     parts.append(f'### Description\n{neutralize(description.strip()) or "_No description._"}')
-    parts.append(f'---\nReported by {one_line(reporter)} via PERPERIS QA')
+    parts.append(f'---\nReported by {one_line(reporter)} via Kattens PT QA')
     return '\n\n'.join(parts) + '\n'
 
 

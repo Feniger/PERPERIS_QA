@@ -89,7 +89,7 @@ class QATests(unittest.TestCase):
         # First fix/verification milestones are kept; the issue is open again.
         self.assertEqual((a['open'], a['fixed'], a['verified']), (1, 1, 1))
         store = app.APP.state.tickets
-        self.assertEqual(store.comments[created['id']][-1], '**Reopened** by Admin via PERPERIS QA\n\nCame back on @\u200bsomeone phone')
+        self.assertEqual(store.comments[created['id']][-1], '**Reopened** by Admin via Kattens PT QA\n\nCame back on @\u200bsomeone phone')
         self.assertEqual([h['new_status'] for h in self.client.get(f'/api/tickets/{created["id"]}/history').json()['events']],
                          ['reported', 'triaged', 'in_progress', 'fixed', 'deployed', 'verified', 'reopened'])
         self.assertEqual(change('closed')['status'], 'closed')
@@ -134,7 +134,7 @@ class QATests(unittest.TestCase):
             self.assertTrue(response.headers['content-type'].startswith(kind), name)
             self.assertEqual(response.headers['x-content-type-options'], 'nosniff')
         manifest = self.client.get('/static/manifest.webmanifest').json()
-        self.assertEqual((manifest['name'], manifest['short_name']), ('PERPERIS QA', 'QA'))
+        self.assertEqual((manifest['name'], manifest['short_name']), ('Kattens PT QA', 'QA'))
         self.assertTrue(all(self.client.get(icon['src']).status_code == 200 for icon in manifest['icons']))
         self.assertEqual(self.client.get('/static/index.html').status_code, 404)
         self.assertEqual(self.client.get('/static/..%2Fapp.py').status_code, 404)

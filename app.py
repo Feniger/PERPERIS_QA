@@ -1,4 +1,4 @@
-"""PERPERIS QA: a front end on GitHub issues (see docs/QA-GITHUB-FRONTEND.md).
+"""Kattens PT QA: a front end on GitHub issues (see docs/QA-GITHUB-FRONTEND.md).
 
 Tickets are GitHub issues (or, for local development and tests, an in-memory
 stand-in). QA keeps no storage of its own: sign-in uses a member list and a
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         APP.state.previews = None
 
 
-APP = FastAPI(title='PERPERIS QA', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+APP = FastAPI(title='Kattens PT QA', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 VALID_SEVERITY = {'critical','high','medium','low'}
 VALID_CATEGORY = {'ui_ux','workout','coach_ai','data','performance','mobile','auth','deployment','other'}
 CATEGORY_NAMES = {'ui_ux': 'UI / UX', 'workout': 'Workout', 'coach_ai': 'Coach / AI', 'data': 'Data',
@@ -205,7 +205,7 @@ def tickets(user:identity.Principal=Depends(current_user)):
 
 @APP.post('/api/tickets',status_code=201)
 def create_ticket(payload:TicketCreate,user:identity.Principal=Depends(guard_mutation)):
-    """A QA report becomes an issue written by the PERPERIS QA App (milestone 2)."""
+    """A QA report becomes an issue written by the Kattens PT QA App (milestone 2)."""
     validate_enum(payload.category,VALID_CATEGORY,'category')
     validate_enum(payload.severity,VALID_SEVERITY,'severity')
     if user.role == 'Tester' and payload.assigned_to:
@@ -410,7 +410,7 @@ def qa_origin(request: Request) -> str:
 
 
 def update_screenshot_comment(ticket_id: int, origin: str, user: identity.Principal):
-    """One bot comment per issue, "📎 N screenshots in PERPERIS QA: <link>", edited rather than reposted.
+    """One bot comment per issue, "📎 N screenshots in Kattens PT QA: <link>", edited rather than reposted.
 
     Best effort: the screenshot change has already happened; a later change corrects the count."""
     try:

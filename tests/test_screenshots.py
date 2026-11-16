@@ -338,7 +338,7 @@ class Api(unittest.TestCase):
         self.assertEqual(approved.status_code, 201, approved.text)
         thread = self.client.get(f'/api/tickets/{request}/comments').json()['comments']
         first_line = thread[-1]['body'].splitlines()[0]
-        self.assertTrue(first_line.startswith('**Go: approved** by ') and first_line.endswith(' via PERPERIS QA'))
+        self.assertTrue(first_line.startswith('**Go: approved** by ') and first_line.endswith(' via Kattens PT QA'))
         # A bug is fixed without a Go.
         self.assertEqual(self.client.post(f'/api/tickets/{self.ticket}/approve', headers=self.headers).status_code, 409)
         self.assertEqual(self.client.post('/api/tickets/9999/approve', headers=self.headers).status_code, 404)
@@ -378,10 +378,10 @@ class Api(unittest.TestCase):
         first = self.upload().json()['screenshot']
         self.upload()
         comment = tickets.screenshot_comments[self.ticket]
-        self.assertIn('📎 2 screenshots in PERPERIS QA: ' + fixture_origin() + f'/#ticket-{self.ticket}', comment)
+        self.assertIn('📎 2 screenshots in Kattens PT QA: ' + fixture_origin() + f'/#ticket-{self.ticket}', comment)
         self.assertNotIn('@', comment)
         self.client.delete(self.path('/' + first['id']), headers=self.headers)
-        self.assertIn('📎 1 screenshot in PERPERIS QA', tickets.screenshot_comments[self.ticket])
+        self.assertIn('📎 1 screenshot in Kattens PT QA', tickets.screenshot_comments[self.ticket])
 
     def test_comment_failure_does_not_fail_the_upload(self):
         with patch.object(self.app.APP.state.tickets, 'upsert_screenshot_comment', side_effect=RuntimeError('GitHub down')):
