@@ -1,4 +1,4 @@
-"""Validated runtime gate for PERPERIS QA.
+"""Validated runtime gate for Kattens PT QA.
 
 It only reads environment variables and imports nothing from the web stack,
 so it can be tested in isolation.
@@ -17,7 +17,7 @@ identity.check_configuration() during startup; GitHub App settings by
 github_issues.config_from_env().
 """
 
-BLOCKED = 'PERPERIS QA cloud startup is blocked: '
+BLOCKED = 'Kattens PT QA cloud startup is blocked: '
 
 
 class StartupBlocked(RuntimeError):

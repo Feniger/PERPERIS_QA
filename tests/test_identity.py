@@ -152,7 +152,7 @@ class IdentityTests(unittest.TestCase):
         for status in ('triaged', 'in_progress', 'fixed', 'deployed'):
             self.assertEqual(change(status), 403)
         self.assertEqual(change('verified'), 200)
-        self.assertEqual(app.APP.state.tickets.comments[number][-1], '**Verified** by Tester via PERPERIS QA')
+        self.assertEqual(app.APP.state.tickets.comments[number][-1], '**Verified** by Tester via Kattens PT QA')
         self.assertEqual(self.exchange('creator@example.test').status_code, 200)
         self.assertEqual(change('reopened'), 200)  # Admin: everything
 
